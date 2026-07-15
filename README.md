@@ -1,99 +1,97 @@
 # 🔬 Multi-Agent Research Assistant
 
-> An AI-powered research assistant that orchestrates multiple specialized agents to plan, search, retrieve, critique, and synthesize comprehensive research reports — all from a single query.
+An AI-powered research assistant that orchestrates **5 specialized agents** to plan, search, retrieve, critique, and synthesize research reports from a single natural-language query — built with **LangGraph**.
 
----
+## Overview
 
-## 🛠️ Tech Stack
+Ask a question, and the system automatically:
+1. **Plans** — breaks your query into focused sub-tasks
+2. **Researches** — searches the web for each sub-task
+3. **Retrieves** — embeds findings and pulls the most relevant context via semantic search
+4. **Critiques** — scores research quality and decides whether more research is needed
+5. **Reports** — synthesizes everything into a structured, readable report
 
-![LangGraph](https://img.shields.io/badge/LangGraph-1.2-blue?style=for-the-badge&logo=data:image/svg+xml;base64,&logoColor=white)
-![LangChain](https://img.shields.io/badge/LangChain-1.3-green?style=for-the-badge&logo=chainlink&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.138-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-![Qdrant](https://img.shields.io/badge/Qdrant-1.18-red?style=for-the-badge&logo=data:image/svg+xml;base64,&logoColor=white)
-![Tavily](https://img.shields.io/badge/Tavily-0.7-orange?style=for-the-badge&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+If the Critic isn't confident in the research quality, the graph loops back to the Researcher automatically (capped at 3 iterations) before finalizing a report.
 
----
+## Architecture
 
-## 🏗️ Architecture
+```mermaid
+graph LR
+    A[Planner] --> B[Researcher]
+    B --> C[Retriever]
+    C --> D[Critic]
+    D -->|low confidence| B
+    D -->|high confidence| E[Reporter]
+    E --> F[Final Report]
 
-> 🚧 **Diagram coming soon.**
+    style A fill:#22c55e,color:#fff
+    style B fill:#22c55e,color:#fff
+    style C fill:#22c55e,color:#fff
+    style D fill:#22c55e,color:#fff
+    style E fill:#22c55e,color:#fff
+    style F fill:#22c55e,color:#fff
+```
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Orchestration | LangGraph + LangChain |
+| LLM | Groq (`llama-3.3-70b-versatile`) |
+| Web Search | Tavily API |
+| Embeddings | Google Gemini (`gemini-embedding-001`, 3072-dim) |
+| Vector DB | Qdrant Cloud |
+| Language | Python 3.11+ |
+
+## Project Structure
+├── agents/          # Individual agent nodes (Planner, Researcher, Retriever, Critic, Reporter)
+├── core/            # Shared state definition + LangGraph workflow wiring
+├── api/             # FastAPI endpoints (in progress)
+├── frontend/         # UI (planned)
+├── tests/           # Unit tests (in progress)
+├── main.py          # CLI entry point
+└── requirements.txt
+
+## Setup
+
+1. Clone the repo and create a virtual environment:
+```bash
+   git clone <your-repo-url>
+   cd multi-agent-research-assistant
+   python -m venv venv
+   venv\Scripts\activate          # Windows
+```
+
+2. Install dependencies:
+```bash
+   pip install -r requirements.txt
+```
+
+3. Copy `.env.example` to `.env` and add your API keys:
+GROQ_API_KEY=
+TAVILY_API_KEY=
+GOOGLE_API_KEY=
+QDRANT_URL=
+QDRANT_API_KEY=
+   All four services offer free tiers sufficient for development and testing.
+
+4. Run the pipeline:
+```bash
+   python -m core.graph
+```
+
+## Current Status
+
+- ✅ All 5 agents implemented and working end-to-end
+- ✅ Conditional loop (Critic → Researcher) working with iteration cap
+- 🔲 CLI entry point (`main.py`) — in progress
+- 🔲 Error handling with retries
+- 🔲 Logging
+- 🔲 Unit tests
+- 🔲 FastAPI endpoints + frontend
+
+## Sample Output
+
+> **Query:** "What are the latest advancements in quantum computing?"
 >
-> The system uses a multi-agent graph powered by LangGraph. Each agent has a specialized role:
->
-> | Agent | Role |
-> |---|---|
-> | **Planner** | Breaks down the research query into sub-tasks |
-> | **Researcher** | Searches the web for relevant information |
-> | **Retriever** | Fetches and indexes documents in the vector store |
-> | **Critic** | Evaluates quality and identifies gaps |
-> | **Reporter** | Synthesizes findings into a final report |
-
----
-
-## 🚀 How to Run Locally
-
-### 1. Clone the repo
-
-```bash
-git clone https://github.com/yourusername/multi-agent-research-assistant.git
-cd multi-agent-research-assistant
-```
-
-### 2. Create & activate a virtual environment
-
-```bash
-python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# macOS / Linux
-source venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Set up environment variables
-
-```bash
-cp .env.example .env
-# Fill in your API keys in .env
-```
-
-### 5. Run the application
-
-```bash
-python main.py
-```
-
----
-
-## 📁 Project Structure
-
-```
-multi-agent-research-assistant/
-├── agents/             # Specialized AI agents
-│   ├── planner.py      # Query decomposition
-│   ├── researcher.py   # Web search & gathering
-│   ├── retriever.py    # Vector store retrieval
-│   ├── critic.py       # Quality evaluation
-│   └── reporter.py     # Report synthesis
-├── core/               # Core orchestration
-│   ├── state.py        # Shared state definition
-│   └── graph.py        # LangGraph workflow
-├── api/                # FastAPI endpoints
-├── frontend/           # UI (coming soon)
-├── tests/              # Test suite
-└── main.py             # Entry point
-```
-
----
-
-## 📄 License
-
-MIT
+> See [`sample_outputs/`](./sample_outputs) for a full example report generated by the pipeline.
