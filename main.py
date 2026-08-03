@@ -24,7 +24,7 @@ def run_pipeline(query: str) -> str:
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python main.py \"your research question here\"")
+        print("Usage: python main.py \"Please type the question you want to research here !\"")
         sys.exit(1)
 
     query = " ".join(sys.argv[1:])

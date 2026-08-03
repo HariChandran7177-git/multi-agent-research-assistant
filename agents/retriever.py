@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
@@ -24,6 +25,10 @@ def ensure_collection():
             vectors_config=VectorParams(size=3072, distance=Distance.COSINE)
         )
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+def upsert_with_retry(qdrant, collection_name, points):
+    return qdrant.upsert(collection_name=collection_name, points=points)
+
 
 def retriever_node(state):
     ensure_collection()
@@ -36,7 +41,7 @@ def retriever_node(state):
         PointStruct(id=i, vector=vectors[i], payload={"text": texts[i]})
         for i in range(len(texts))
     ]
-    qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
+    upsert_with_retry(qdrant, COLLECTION_NAME, points)
 
     # Now search back using the original query
     query_vector = embeddings.embed_query(state["query"])

@@ -3,6 +3,7 @@ from langchain_groq import ChatGroq
 from core.state import ResearchState
 import os
 from dotenv import load_dotenv
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
@@ -31,6 +32,11 @@ Respond ONLY with valid JSON in this exact format, no other text:
 """
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+def invoke_with_retry(llm, prompt):
+    return llm.invoke(prompt)
+
+
 def critic_node(state: ResearchState) -> ResearchState:
     # Truncate inputs to stay within Groq free-tier token limits
     research_text = "\n".join(state.get("research_results", []))[:4000]
@@ -42,8 +48,15 @@ def critic_node(state: ResearchState) -> ResearchState:
         retrieved_docs=docs_text,
     )
 
-    response = llm.invoke(prompt)
-    content = response.content.strip()
+    try:
+        response = invoke_with_retry(llm, prompt)
+        content = response.content.strip()
+    except Exception as e:
+        print(f"[Critic] LLM call failed after retries: {e}")
+        state["confidence_score"] = 0.0
+        state["critique"] = f"Critic failed to run: {e}"
+        state["iteration_count"] = state.get("iteration_count", 0) + 1
+        return state
 
     # Strip accidental markdown fences if the model adds them
     if content.startswith("```"):

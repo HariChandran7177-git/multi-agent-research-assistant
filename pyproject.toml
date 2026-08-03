@@ -1,6 +1,49 @@
-[tool.black]
-line-length = 88
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multi-agent-research-assistant"
+version = "0.1.0"
+description = "An AI research assistant that uses multiple specialized agents."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Your Name", email = "your.name@example.com" },
+]
+dependencies = [
+    "langchain-core>=0.2.0",
+    "langchain-google-genai>=1.0.0",
+    "langchain-groq>=0.1.0",
+    "langgraph>=1.0.0",
+    "langgraph-checkpoint>=0.1.0",
+    "langsmith>=0.3.0",
+    "python-dotenv>=1.0.0",
+    "tiktoken>=0.5.0",
+    "qdrant-client>=1.0.0",
+    "requests>=2.31.0",
+    "streamlit>=1.0.0",
+    "tavily-python>=0.3.0",
+    "fastapi>=0.140.8",
+    "uvicorn>=0.51.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+    "black>=24.0.0",
+]
+
+[project.scripts]
+research = "main:main"
 
 [tool.ruff]
 line-length = 88
 select = ["E", "F"]
+
+[tool.black]
+line-length = 88
+
+[tool.setuptools.packages.find]
+include = ["api*", "core*", "agents*"]
