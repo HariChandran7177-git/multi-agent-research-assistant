@@ -6,12 +6,14 @@ from core.state import ResearchState
 from core.logger import get_logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_WAIT_MIN, RETRY_WAIT_MAX
+
 load_dotenv()
 logger = get_logger(__name__)
 
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    api_key=os.getenv("GROQ_API_KEY"),
+    model=GROQ_MODEL,
+    api_key=GROQ_API_KEY,
     temperature=0.2,
 )
 
@@ -28,7 +30,7 @@ If the query is a simple/casual question that you can answer immediately without
 OUTPUT ONLY VALID JSON. Do not wrap it in markdown block.
 """
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+@retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=1, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX))
 def invoke_with_retry(llm, prompt):
     return llm.invoke(prompt)
 
