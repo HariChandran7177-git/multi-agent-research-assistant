@@ -1,13 +1,14 @@
 
 from langgraph.graph import StateGraph, END
 from core.state import ResearchState
+from agents.router import router_node
 from agents.planner import planner_node
 from agents.researcher import researcher_node
 from agents.retriever import retriever_node
 from agents.critic import critic_node
 from agents.reporter import reporter_node
 
-CONFIDENCE_THRESHOLD = 0.7
+CONFIDENCE_THRESHOLD = 0.8
 MAX_ITERATIONS = 3
 
 
@@ -23,10 +24,18 @@ def should_loop(state: ResearchState) -> str:
     return "researcher"  # loop back for more research
 
 
+def route_after_router(state: ResearchState) -> str:
+    """Decides if we should bypass the research pipeline."""
+    if state.get("is_casual"):
+        return END
+    return "planner"
+
+
 def build_graph():
     workflow = StateGraph(ResearchState)
 
     # Register each agent as a node
+    workflow.add_node("router", router_node)
     workflow.add_node("planner", planner_node)
     workflow.add_node("researcher", researcher_node)
     workflow.add_node("retriever", retriever_node)
@@ -34,7 +43,17 @@ def build_graph():
     workflow.add_node("reporter", reporter_node)
 
     # Set the starting point
-    workflow.set_entry_point("planner")
+    workflow.set_entry_point("router")
+
+    # Route after router
+    workflow.add_conditional_edges(
+        "router",
+        route_after_router,
+        {
+            END: END,
+            "planner": "planner",
+        },
+    )
 
     # Straight-line connections
     workflow.add_edge("planner", "researcher")

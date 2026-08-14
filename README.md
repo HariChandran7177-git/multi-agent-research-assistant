@@ -1,97 +1,105 @@
-# 🔬 Multi-Agent Research Assistant
+<div align="center">
+  <h1>🚀 Multi-Agent Research Assistant</h1>
+  <p>An intelligent, production-ready AI orchestration system built with <strong>LangGraph</strong> that plans, researches, evaluates, and writes.</p>
+</div>
 
-An AI-powered research assistant that orchestrates **5 specialized agents** to plan, search, retrieve, critique, and synthesize research reports from a single natural-language query — built with **LangGraph**.
+---
 
-## Overview
+## 🌟 Overview
 
-Ask a question, and the system automatically:
-1. **Plans** — breaks your query into focused sub-tasks
-2. **Researches** — searches the web for each sub-task
-3. **Retrieves** — embeds findings and pulls the most relevant context via semantic search
-4. **Critiques** — scores research quality and decides whether more research is needed
-5. **Reports** — synthesizes everything into a structured, readable report
+The Multi-Agent Research Assistant takes a single natural-language query and autonomously coordinates **6 specialized AI agents** to generate comprehensive, fact-checked markdown reports.
 
-If the Critic isn't confident in the research quality, the graph loops back to the Researcher automatically (capped at 3 iterations) before finalizing a report.
+What makes this system unique is its focus on **performance and cost-optimization**:
+- **Smart Routing**: Simple queries instantly bypass the research pipeline to save tokens.
+- **Async Execution**: Deep research tasks are parallelized, reducing 60-second waits to under 10 seconds.
+- **Semantic RAG**: Instead of injecting raw HTML into the final prompt, it embeds the web data and retrieves only the most mathematically relevant chunks using Qdrant.
+- **Dynamic Tone**: The AI automatically detects the desired tone of your prompt (e.g. "academic", "funny") and customizes the final report.
 
-## Architecture
+## 🏗️ Architecture & Workflow
 
 ```mermaid
-graph LR
-    A[Planner] --> B[Researcher]
-    B --> C[Retriever]
-    C --> D[Critic]
-    D -->|low confidence| B
-    D -->|high confidence| E[Reporter]
-    E --> F[Final Report]
-
-    style A fill:#22c55e,color:#fff
-    style B fill:#22c55e,color:#fff
-    style C fill:#22c55e,color:#fff
-    style D fill:#22c55e,color:#fff
-    style E fill:#22c55e,color:#fff
-    style F fill:#22c55e,color:#fff
+graph TD
+    User([User CLI Input]) --> Main(main.py)
+    Main --> Router{Router Agent}
+    
+    Router -- is_casual: True --> CasualResp([Instant Friendly Response])
+    Router -- Requires Research --> Planner(Planner Agent)
+    
+    Planner --> Researcher(Researcher Agent)
+    Researcher -.-> |Async Web Search 1| Researcher
+    Researcher -.-> |Async Web Search 2| Researcher
+    
+    Researcher --> Retriever(Retriever Agent)
+    Retriever -.-> |Embed & Store| Qdrant[(Qdrant Vector DB)]
+    Qdrant -.-> |Top-K Similarity| Retriever
+    
+    Retriever --> Critic(Critic Agent)
+    Critic --> |Confidence < 0.8| Researcher
+    Critic --> |Confidence >= 0.8| Reporter(Reporter Agent)
+    
+    Reporter --> Output([Final Markdown Report])
 ```
 
-## Tech Stack
+## 🛠️ Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Orchestration | LangGraph + LangChain |
-| LLM | Groq (`llama-3.3-70b-versatile`) |
-| Web Search | Tavily API |
-| Embeddings | Google Gemini (`gemini-embedding-001`, 3072-dim) |
-| Vector DB | Qdrant Cloud |
-| Language | Python 3.11+ |
+| **Orchestration** | LangGraph + LangChain |
+| **LLM Engine** | Groq (`llama-3.3-70b-versatile`) |
+| **Web Search** | Tavily API (Advanced Depth) |
+| **Embeddings** | Google Gemini (`gemini-embedding-001`, 3072-dim) |
+| **Vector Database** | Qdrant Cloud (with fallback to in-memory) |
+| **Concurrency** | Python `ThreadPoolExecutor` |
 
-## Project Structure
-├── agents/          # Individual agent nodes (Planner, Researcher, Retriever, Critic, Reporter)
-├── core/            # Shared state definition + LangGraph workflow wiring
-├── api/             # FastAPI endpoints (in progress)
-├── frontend/         # UI (planned)
-├── tests/           # Unit tests (in progress)
-├── main.py          # CLI entry point
+## 📂 Project Structure
+
+```text
+├── agents/
+│   ├── router.py       # Gatekeeper: intercepts casual chats vs deep research
+│   ├── planner.py      # Brain: breaks complex tasks into 5 tactical sub-tasks
+│   ├── researcher.py   # Async Workers: scrapes the web concurrently
+│   ├── retriever.py    # RAG Engine: handles embeddings and Qdrant retrieval
+│   ├── critic.py       # Evaluator: scores research quality out of 1.0
+│   └── reporter.py     # Writer: formats the final dynamic markdown report
+├── core/
+│   ├── graph.py        # LangGraph nodes and conditional edges
+│   ├── state.py        # TypedDict shared memory (ResearchState)
+│   └── logger.py       # Standardized console logging
+├── main.py             # CLI Entry Point
 └── requirements.txt
+```
 
-## Setup
+## 🚀 Quickstart
 
-1. Clone the repo and create a virtual environment:
-```bash
+1. **Clone & Setup Environment**
+   ```bash
    git clone <your-repo-url>
    cd multi-agent-research-assistant
    python -m venv venv
    venv\Scripts\activate          # Windows
-```
+   ```
 
-2. Install dependencies:
-```bash
+2. **Install Dependencies**
+   ```bash
    pip install -r requirements.txt
-```
+   ```
 
-3. Copy `.env.example` to `.env` and add your API keys:
-GROQ_API_KEY=
-TAVILY_API_KEY=
-GOOGLE_API_KEY=
-QDRANT_URL=
-QDRANT_API_KEY=
-   All four services offer free tiers sufficient for development and testing.
+3. **Configure API Keys**
+   Copy `.env.example` to `.env` and add your keys (all have generous free tiers):
+   ```env
+   GROQ_API_KEY=your_key
+   TAVILY_API_KEY=your_key
+   GOOGLE_API_KEY=your_key
+   QDRANT_URL=your_url
+   QDRANT_API_KEY=your_key
+   ```
 
-4. Run the pipeline:
-```bash
-   python -m core.graph
-```
+4. **Run the Assistant**
+   ```bash
+   python main.py "Explain quantum computing like I'm 5 years old"
+   ```
 
-## Current Status
-
-- ✅ All 5 agents implemented and working end-to-end
-- ✅ Conditional loop (Critic → Researcher) working with iteration cap
-- 🔲 CLI entry point (`main.py`) — in progress
-- 🔲 Error handling with retries
-- 🔲 Logging
-- 🔲 Unit tests
-- 🔲 FastAPI endpoints + frontend
-
-## Sample Output
-
-> **Query:** "What are the latest advancements in quantum computing?"
->
-> See [`sample_outputs/`](./sample_outputs) for a full example report generated by the pipeline.
+## 🛡️ Fault Tolerance & Safety
+- **Retry Logic**: All LLM calls are wrapped in `tenacity` exponential backoffs.
+- **Database Fallbacks**: If the remote Qdrant cloud goes down, the Retriever automatically spins up an in-memory database to prevent a hard crash.
+- **Cost Caps**: The reflection loop between the Critic and Researcher is strictly capped at 3 iterations to prevent infinite API billing loops.

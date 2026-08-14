@@ -2,8 +2,10 @@
 from typing import TypedDict, List
 
 
-class ResearchState(TypedDict):
+class ResearchState(TypedDict, total=False):
     query: str                  # the original user question
+    is_casual: bool             # True if it's a simple chat query
+    tone: str                   # Detected tone for the reporter to use
     plan: List[str]             # sub-tasks the Planner breaks the query into
     research_results: List[str] # raw findings from the Researcher agent
     retrieved_docs: List[str]   # relevant chunks pulled from Qdrant

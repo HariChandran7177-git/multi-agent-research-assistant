@@ -4,8 +4,11 @@ from core.state import ResearchState
 import os
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential
+from core.logger import get_logger
 
 load_dotenv()
+
+logger = get_logger(__name__)
 
 llm = ChatGroq(
     model="llama-3.3-70b-versatile",
@@ -13,20 +16,25 @@ llm = ChatGroq(
     temperature=0.2,
 )
 
-CRITIC_PROMPT = """You are a research quality critic.
+CRITIC_PROMPT = """You are a rigorous research quality evaluator.
 
-Original query: {query}
+Original Query: {query}
 
-Research findings:
+Research Findings:
 {research_results}
 
-Retrieved documents:
+Retrieved Documents:
 {retrieved_docs}
 
-Evaluate whether this research sufficiently answers the original query.
-Respond ONLY with valid JSON in this exact format, no other text:
+Evaluate whether this research provides deep, actionable, and specific strategic insight to answer the query, including verified source URLs.
+Assign a confidence score:
+- 0.85 to 1.0: Comprehensive data, multi-angle business analysis, clear strategic details, and source citations present.
+- 0.60 to 0.84: Good coverage but missing tactical depth, financial metrics, or specific source references.
+- Below 0.60: Shallow, generic, or incomplete findings requiring additional research pass.
+
+Respond ONLY with valid JSON in this exact format, with no markdown fences or extra text:
 {{
-  "score": <float between 0 and 1>,
+  "score": <float between 0.0 and 1.0>,
   "critique": "<1-2 sentence explanation of gaps or confirmation of quality>"
 }}
 """
@@ -38,9 +46,10 @@ def invoke_with_retry(llm, prompt):
 
 
 def critic_node(state: ResearchState) -> ResearchState:
-    # Truncate inputs to stay within Groq free-tier token limits
-    research_text = "\n".join(state.get("research_results", []))[:4000]
-    docs_text = "\n".join(state.get("retrieved_docs", []))[:3000]
+    logger.info("Evaluating research quality")
+
+    research_text = "\n".join(state.get("research_results", []))[:8000]
+    docs_text = "\n".join(state.get("retrieved_docs", []))[:6000]
 
     prompt = CRITIC_PROMPT.format(
         query=state["query"],
@@ -52,7 +61,7 @@ def critic_node(state: ResearchState) -> ResearchState:
         response = invoke_with_retry(llm, prompt)
         content = response.content.strip()
     except Exception as e:
-        print(f"[Critic] LLM call failed after retries: {e}")
+        logger.error(f"LLM call failed after retries: {e}")
         state["confidence_score"] = 0.0
         state["critique"] = f"Critic failed to run: {e}"
         state["iteration_count"] = state.get("iteration_count", 0) + 1
@@ -72,7 +81,10 @@ def critic_node(state: ResearchState) -> ResearchState:
         # Fallback if the LLM doesn't return clean JSON
         score = 0.5
         critique = f"Could not parse critic output: {content[:200]}"
+        logger.warning(
+            f"Failed to parse LLM JSON output, using fallback score")
 
+    logger.info(f"Confidence score: {score}")
     state["confidence_score"] = score
     state["critique"] = critique
     state["iteration_count"] = state.get("iteration_count", 0) + 1

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
-    { name = "Grandhi Hari Chandra", email = "[grandhiharichandran@gmail.com]" },
+    { name = "Grandhi Hari Chandra", email = "grandhiharichandran@gmail.com" },
 ]
 dependencies = [
     "langchain-core>=0.2.0",
