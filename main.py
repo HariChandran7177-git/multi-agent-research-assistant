@@ -3,10 +3,11 @@ import sys
 from core.graph import build_graph
 from core.state import ResearchState
 
+# Build the graph once at startup — reused across all queries
+_graph = build_graph()
+
 
 def run_pipeline(query: str) -> str:
-    graph = build_graph()
-
     initial_state: ResearchState = {
         "query": query,
         "plan": [],
@@ -18,7 +19,7 @@ def run_pipeline(query: str) -> str:
         "final_report": "",
     }
 
-    final_state = graph.invoke(initial_state)
+    final_state = _graph.invoke(initial_state)
     return final_state["final_report"]
 
 

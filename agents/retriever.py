@@ -92,8 +92,8 @@ def retriever_node(state):
     )
 
     logger.info(f"Retrieved {len(results.points)} relevant documents")
-    state["retrieved_docs"] = [point.payload["text"]
-                               for point in results.points]
+    state["retrieved_docs"]  = [point.payload["text"] for point in results.points]
+    state["qdrant_scores"]   = [point.score          for point in results.points]
     return state
 
 

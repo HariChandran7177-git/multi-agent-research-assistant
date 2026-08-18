@@ -1,15 +1,12 @@
-
 from langgraph.graph import StateGraph, END
 from core.state import ResearchState
+from core.config import CONFIDENCE_THRESHOLD, MAX_ITERATIONS
 from agents.router import router_node
 from agents.planner import planner_node
 from agents.researcher import researcher_node
 from agents.retriever import retriever_node
 from agents.critic import critic_node
 from agents.reporter import reporter_node
-
-CONFIDENCE_THRESHOLD = 0.8
-MAX_ITERATIONS = 3
 
 
 def should_loop(state: ResearchState) -> str:

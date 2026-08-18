@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential
 from core.logger import get_logger
+from core.scorer import calculate_objective_score, calculate_hybrid_score
 
 load_dotenv()
 
@@ -77,19 +78,31 @@ def critic_node(state: ResearchState) -> ResearchState:
 
     try:
         parsed = json.loads(content)
-        score = float(parsed.get("score", 0.5))
+        llm_score = float(parsed.get("score", 0.5))
         critique = parsed.get("critique", "No critique provided.")
     except (json.JSONDecodeError, ValueError):
         # Fallback if the LLM doesn't return clean JSON
-        score = 0.5
+        llm_score = 0.5
         critique = f"Could not parse critic output: {content[:200]}"
-        logger.warning(
-            f"Failed to parse LLM JSON output, using fallback score")
+        logger.warning("Failed to parse LLM JSON output, using fallback score")
 
-    logger.info(f"Confidence score: {score}")
-    state["confidence_score"] = score
-    state["critique"] = critique
-    state["iteration_count"] = state.get("iteration_count", 0) + 1
+    # --- Objective scoring ---
+    qdrant_scores = state.get("qdrant_scores", [])
+    objective_breakdown = calculate_objective_score(state, qdrant_scores=qdrant_scores)
+
+    # --- Hybrid: blend LLM judgment (60%) with objective signals (40%) ---
+    hybrid_score = calculate_hybrid_score(llm_score, objective_breakdown)
+
+    logger.info(
+        f"Critic scores -> LLM: {llm_score:.3f} | "
+        f"Objective: {objective_breakdown['objective_score']:.3f} | "
+        f"Hybrid: {hybrid_score:.3f}"
+    )
+
+    state["confidence_score"] = hybrid_score
+    state["score_breakdown"]  = {"llm_score": round(llm_score, 3), **objective_breakdown}
+    state["critique"]         = critique
+    state["iteration_count"]  = state.get("iteration_count", 0) + 1
 
     return state
 

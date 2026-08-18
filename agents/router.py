@@ -11,8 +11,9 @@ from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_WAIT_MIN
 load_dotenv()
 logger = get_logger(__name__)
 
+# Use a fast, small model for routing — no need for the heavy 70B model here
 llm = ChatGroq(
-    model=GROQ_MODEL,
+    model="llama-3.1-8b-instant",
     api_key=GROQ_API_KEY,
     temperature=0.2,
 )
@@ -30,7 +31,8 @@ If the query is a simple/casual question that you can answer immediately without
 OUTPUT ONLY VALID JSON. Do not wrap it in markdown block.
 """
 
-@retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=1, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX))
+# Tighter retry settings for the router — fast fail, no long waits
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=3))
 def invoke_with_retry(llm, prompt):
     return llm.invoke(prompt)
 

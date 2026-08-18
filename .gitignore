@@ -1,6 +1,7 @@
-# Virtual Environment
+# Virtual Environments
 venv/
 .venv/
+.venv_broken/
 
 # Environment Variables
 .env
@@ -8,19 +9,34 @@ venv/
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 
-# Testing
+# Testing & Coverage
 .pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
 
-# Ruff
+# Type Checking
+.mypy_cache/
+
+# Linting
 .ruff_cache/
 
-# Build
+# Build & Distribution
 *.egg-info/
+dist/
+build/
+*.egg
 
 # IDE
 .vscode/
+.idea/
+*.swp
+*.swo
 
 # Operating System
 .DS_Store
 Thumbs.db
+desktop.ini
