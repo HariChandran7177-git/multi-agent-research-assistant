@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeuralDesk - Multi-Agent Research Intelligence</title>
+  <meta name="description" content="An autonomous 6-agent AI pipeline that researches any topic, evaluates its own findings, and writes polished reports in real-time." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100;200;300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <!-- Resolve assets regardless of whether served from /static/ or / -->
+  <script>
+    (function() {
+      var base = document.createElement('base');
+      var path = window.location.pathname;
+      if (path.startsWith('/static/')) {
+        base.href = '/static/';
+      }
+      document.head.appendChild(base);
+    })();
+  </script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<canvas id="particle-canvas"></canvas>
+<div id="app">
+  <div class="grid-lines-overlay">
+    <div class="line"></div>
+    <div class="line"></div>
+    <div class="line"></div>
+  </div>
+
+  <!-- NAV -->
+  <nav>
+    <div class="nav-logo">Neural<span>Desk</span></div>
+    <ul class="nav-links">
+      <li><a href="#pipeline-section">How it works</a></li>
+      <li><a href="#dashboard">Live Demo</a></li>
+      <li><a href="https://github.com/HariChandran7177/multi-agent-research-assistant" target="_blank">GitHub</a></li>
+    </ul>
+    <div class="nav-badge">
+      <div class="status-dot"></div>
+      LangGraph v2.0
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section id="hero">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="hero-eyebrow">
+      <span>🤖</span>
+      6-Agent LangGraph Pipeline - Real-Time Intelligence
+    </div>
+    <h1 class="hero-title">
+      <span class="line-1">Research at the</span>
+      <span class="line-2">Speed of Thought</span>
+    </h1>
+    <p class="hero-sub">An autonomous AI system that routes, plans, searches, retrieves, critiques, and writes — all while you watch the agents think in real-time.</p>
+    <div class="search-container">
+      <div class="search-input-wrap">
+        <textarea id="query-input" placeholder="Ask anything... e.g. 'Explain microservices vs monolith like a senior engineer'" rows="1" spellcheck="false"></textarea>
+        <button id="run-btn" onclick="startResearch()">
+          <div class="loading-spinner"></div>
+          <span class="btn-text">Research</span>
+          <span class="btn-icon">&#8594;</span>
+        </button>
+      </div>
+      <div class="search-hints">
+        <div class="hint-chip" onclick="setQuery('AWS vs GCP for startups in 2025 explain like a senior engineer')">AWS vs GCP</div>
+        <div class="hint-chip" onclick="setQuery('Latest advancements in quantum computing')">Quantum Computing</div>
+        <div class="hint-chip" onclick="setQuery('How does transformer attention mechanism work? Explain simply')">Transformers</div>
+        <div class="hint-chip" onclick="setQuery('Best practices for building production RAG systems in 2025')">RAG Systems</div>
+        <div class="hint-chip" onclick="setQuery('State of AI regulation globally in 2025')">AI Regulation</div>
+      </div>
+    </div>
+    <div class="scroll-indicator"><span>Scroll</span><div class="scroll-line"></div></div>
+  </section>
+
+  <!-- STATS -->
+  <div id="stats-section">
+    <div class="stats-inner">
+      <div class="stat-item"><div class="stat-num">6</div><div class="stat-label">Specialized Agents</div></div>
+      <div class="stat-item"><div class="stat-num">~42s</div><div class="stat-label">Avg Research Time</div></div>
+      <div class="stat-item"><div class="stat-num">0.84</div><div class="stat-label">Avg Confidence Score</div></div>
+      <div class="stat-item"><div class="stat-num">3072</div><div class="stat-label">Embedding Dimensions</div></div>
+    </div>
+  </div>
+
+  <!-- PIPELINE SECTION -->
+  <section id="pipeline-section">
+    <div class="section-eyebrow">Architecture</div>
+    <h2 class="section-title">Six agents.<br/>One unified intelligence.</h2>
+    <p class="section-subtitle">Every query triggers a choreographed pipeline - each agent playing a precise role, self-correcting until confident.</p>
+    <div class="pipeline-grid">
+      <div class="agent-card" data-delay="0"><span class="agent-num">01</span><span class="agent-icon">🔀</span><div class="agent-name">Router</div><div class="agent-desc">Intercepts casual queries for instant answers. Detects tone - formal, friendly, technical, ELI5 - from your words.</div><span class="agent-tag">llama-3.1-8b</span></div>
+      <div class="agent-card" data-delay="80"><span class="agent-num">02</span><span class="agent-icon">📋</span><div class="agent-name">Planner</div><div class="agent-desc">Classifies intent into 10 research types. Breaks complex queries into 4-5 targeted sub-tasks for full coverage.</div><span class="agent-tag">llama-3.3-70b</span></div>
+      <div class="agent-card" data-delay="160"><span class="agent-num">03</span><span class="agent-icon">⚡</span><div class="agent-name">Researcher</div><div class="agent-desc">Fires parallel Tavily web searches via ThreadPoolExecutor. Cuts research time from ~60s to under 10s per pass.</div><span class="agent-tag">Tavily API</span></div>
+      <div class="agent-card" data-delay="240"><span class="agent-num">04</span><span class="agent-icon">🧠</span><div class="agent-name">Retriever</div><div class="agent-desc">Embeds all results with Google Gemini 3072-dim vectors. Retrieves only the most relevant chunks from Qdrant.</div><span class="agent-tag">Qdrant + Gemini</span></div>
+      <div class="agent-card" data-delay="320"><span class="agent-num">05</span><span class="agent-icon">🧐</span><div class="agent-name">Critic</div><div class="agent-desc">Hybrid scorer: 60% LLM judgment + 40% objective signals. Loops back if confidence is low - up to 3 times.</div><span class="agent-tag">Self-Correcting</span></div>
+      <div class="agent-card" data-delay="400"><span class="agent-num">06</span><span class="agent-icon">📝</span><div class="agent-name">Reporter</div><div class="agent-desc">Writes a fully formatted markdown report, dynamically adapting tone and depth to match your original intent.</div><span class="agent-tag">Tone-Aware</span></div>
+    </div>
+  </section>
+
+  <!-- DASHBOARD -->
+  <section id="dashboard">
+    <div class="dashboard-header">
+      <div>
+        <div class="dashboard-eyebrow">Mission Control</div>
+        <div class="dashboard-title">Research in Progress</div>
+      </div>
+      <button class="toolbar-btn" onclick="resetDashboard()">X New Query</button>
+    </div>
+    <div class="query-display" id="query-display">
+      <span class="query-icon">💬</span>
+      <div>
+        <div class="query-label">Active Research Query</div>
+        <div class="query-text" id="query-display-text"></div>
+      </div>
+    </div>
+    <div class="pipeline-vis" id="pipeline-vis">
+      <div class="pipe-node" id="pnode-router"><div class="pipe-icon-wrap">🔀</div><div class="pipe-label">Router</div></div>
+      <div class="pipe-node" id="pnode-planner"><div class="pipe-icon-wrap">📋</div><div class="pipe-label">Planner</div></div>
+      <div class="pipe-node" id="pnode-researcher"><div class="pipe-icon-wrap">⚡</div><div class="pipe-label">Researcher</div></div>
+      <div class="pipe-node" id="pnode-retriever"><div class="pipe-icon-wrap">🧠</div><div class="pipe-label">Retriever</div></div>
+      <div class="pipe-node" id="pnode-critic"><div class="pipe-icon-wrap">🧐</div><div class="pipe-label">Critic</div></div>
+      <div class="pipe-node" id="pnode-reporter"><div class="pipe-icon-wrap">📝</div><div class="pipe-label">Reporter</div></div>
+    </div>
+    <div class="dashboard-body">
+      <div class="activity-panel">
+        <div class="panel-header">
+          <div class="panel-title">Agent Activity</div>
+          <div class="panel-live-badge"><div class="live-dot" id="live-dot"></div><span id="live-label">LIVE</span></div>
+        </div>
+        <div class="activity-log" id="activity-log"></div>
+        <div class="confidence-meter">
+          <div class="confidence-header">
+            <div class="confidence-label">Confidence Score</div>
+            <div class="confidence-value" id="conf-value">--</div>
+          </div>
+          <div class="confidence-track"><div class="confidence-fill" id="conf-fill"></div></div>
+        </div>
+      </div>
+      <div class="report-panel">
+        <div class="report-toolbar">
+          <div class="report-toolbar-left">
+            <div class="toolbar-dot dot-red"></div>
+            <div class="toolbar-dot dot-yellow"></div>
+            <div class="toolbar-dot dot-green"></div>
+            <div class="report-toolbar-title">report.md</div>
+          </div>
+          <div class="report-toolbar-right">
+            <button class="toolbar-btn" id="copy-btn" onclick="copyReport()" style="display:none">Copy</button>
+            <button class="toolbar-btn" id="download-btn" onclick="downloadReport()" style="display:none">Download</button>
+          </div>
+        </div>
+        <div class="report-placeholder" id="report-placeholder">
+          <div class="placeholder-icon">📄</div>
+          <div class="placeholder-text">Report will appear here<br/>as agents complete their work</div>
+        </div>
+        <div class="report-content" id="report-content">
+          <div class="report-meta" id="report-meta"></div>
+          <div id="report-body"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TECH STACK -->
+  <section id="tech-section">
+    <div class="tech-inner">
+      <div class="section-eyebrow">Tech Stack</div>
+      <h2 class="section-title">Built on the<br/><span class="gradient-text">best infrastructure</span></h2>
+      <div class="tech-grid">
+        <div class="tech-card"><span class="tech-icon">🕸️</span><div class="tech-name">LangGraph</div><div class="tech-role">Stateful agent orchestration</div></div>
+        <div class="tech-card"><span class="tech-icon">⚡</span><div class="tech-name">Groq + Llama 3.3</div><div class="tech-role">Ultra-fast LLM inference</div></div>
+        <div class="tech-card"><span class="tech-icon">🔍</span><div class="tech-name">Tavily API</div><div class="tech-role">Real-time web research</div></div>
+        <div class="tech-card"><span class="tech-icon">🎯</span><div class="tech-name">Qdrant</div><div class="tech-role">Vector database retrieval</div></div>
+        <div class="tech-card"><span class="tech-icon">💎</span><div class="tech-name">Google Gemini</div><div class="tech-role">3072-dim embeddings</div></div>
+        <div class="tech-card"><span class="tech-icon">🚀</span><div class="tech-name">FastAPI + SSE</div><div class="tech-role">Real-time event streaming</div></div>
+        <div class="tech-card"><span class="tech-icon">🔄</span><div class="tech-name">Tenacity</div><div class="tech-role">Exponential backoff retries</div></div>
+        <div class="tech-card"><span class="tech-icon">🧵</span><div class="tech-name">ThreadPoolExecutor</div><div class="tech-role">Parallel research tasks</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-copy">Built with love by <span>Grandhi Hari Chandra</span></div>
+      <ul class="footer-links">
+        <li><a href="https://github.com/HariChandran7177/multi-agent-research-assistant" target="_blank">GitHub</a></li>
+        <li><a href="/docs" target="_blank">API Docs</a></li>
+      </ul>
+    </div>
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
