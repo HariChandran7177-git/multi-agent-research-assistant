@@ -15,7 +15,7 @@ const API_BASE = 'http://localhost:8000';
   let mouse = { x: null, y: null };
   const COUNT = 80;
   const MAX_DIST = 140;
-  const COLORS = ['139,92,246', '234,88,12', '132,204,22'];
+  const COLORS = ['194,65,12', '217,119,6', '101,163,13'];
 
   function resize() {
     W = canvas.width = window.innerWidth;
@@ -721,5 +721,24 @@ async function runDemoMode(query) {
         });
       });
     });
+  });
+})();
+
+// ─────────────────────────────────────────────────────────
+//  EASTER EGG — Konami Code: ↑↑↓↓←→←→BA
+// ─────────────────────────────────────────────────────────
+(function initKonamiCode() {
+  const CODE = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
+  let pos = 0;
+  document.addEventListener('keydown', function(e) {
+    if (e.key === CODE[pos]) {
+      pos++;
+      if (pos === CODE.length) {
+        pos = 0;
+        document.getElementById('konami-overlay').classList.add('active');
+      }
+    } else {
+      pos = (e.key === CODE[0]) ? 1 : 0;
+    }
   });
 })();
