@@ -198,6 +198,14 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- EASTER EGG: Konami Code overlay (↑↑↓↓←→←→BA) -->
+<div id="konami-overlay">
+  <div class="konami-title">🔥 You found the secret! 🔥</div>
+  <div class="konami-sub">↑ ↑ ↓ ↓ ← → ← → B A<br/><br/>Congratulations — you have the reflexes of a senior engineer and the curiosity of a great one.<br/>The pipeline is yours. Go build something interesting.</div>
+  <button class="konami-close" onclick="document.getElementById('konami-overlay').classList.remove('active')">[ Close ]</button>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
 <script src="app.js"></script>
