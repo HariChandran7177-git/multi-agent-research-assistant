@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 
 # Use a fast, small model for routing — no need for the heavy 70B model here
 llm = ChatGroq(
-    model="llama-3.1-8b-instant",
+    model="groq/compound-mini",
     api_key=GROQ_API_KEY,
     temperature=0.2,
 )
