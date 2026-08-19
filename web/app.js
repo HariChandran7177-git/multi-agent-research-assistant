@@ -108,41 +108,20 @@ const API_BASE = 'http://localhost:8000';
     }).join('');
   }
 
-  // Split hero titles
-  const h1Line1 = document.querySelector('.hero-title .line-1');
-  const h1Line2 = document.querySelector('.hero-title .line-2');
-  splitTextToChars(h1Line1);
-  splitTextToChars(h1Line2);
+  // Do NOT split hero title lines — gradient -webkit-background-clip breaks when innerHTML is replaced
 
-  // Hero animations
+  // Hero animations — animate LINES as whole units, not split chars
+  // (char-splitting breaks the CSS gradient clip on .line-1 / .line-2)
   gsap.from('.hero-eyebrow', { opacity: 0, y: 15, duration: 0.6, ease: 'power2.out' });
-  
-  if (h1Line1 && h1Line2) {
-    gsap.from('.hero-title span', {
-      opacity: 0,
-      y: 20,
-      stagger: 0.012,
-      duration: 0.6,
-      ease: 'power3.out',
-      delay: 0.1
-    });
-  }
+  gsap.from('.hero-title .line-1', { opacity: 0, y: 30, duration: 0.7, ease: 'power3.out', delay: 0.15 });
+  gsap.from('.hero-title .line-2', { opacity: 0, y: 30, duration: 0.7, ease: 'power3.out', delay: 0.3, clearProps: 'transform,opacity' });
+  gsap.from('.hero-sub', { opacity: 0, y: 15, duration: 0.8, ease: 'power2.out', delay: 0.45 });
+  gsap.from('.search-container', { opacity: 0, y: 15, duration: 0.8, ease: 'power2.out', delay: 0.55 });
 
-  gsap.from('.hero-sub', { opacity: 0, y: 15, duration: 0.8, ease: 'power2.out', delay: 0.35 });
-  gsap.from('.search-container', { opacity: 0, y: 15, duration: 0.8, ease: 'power2.out', delay: 0.45 });
-
-  // Scroll triggers for section titles
+  // Section titles — fade whole element, no splitting
   document.querySelectorAll('.section-title').forEach(title => {
-    splitTextToChars(title);
-    gsap.from(title.querySelectorAll('span'), {
-      scrollTrigger: {
-        trigger: title,
-        start: 'top 85%',
-        toggleActions: 'play none none none'
-      },
-      opacity: 0,
-      y: 15,
-      stagger: 0.01,
+    gsap.from(title, {
+      scrollTrigger: { trigger: title, start: 'top 88%', toggleActions: 'play none none none' },
       duration: 0.5,
       ease: 'power2.out'
     });
