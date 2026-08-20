@@ -97,6 +97,15 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
             "final_report": "",
         }
 
+        # Start Plain LLM task concurrently
+        from langchain_groq import ChatGroq
+        from core.config import GROQ_REPORTER_MODEL, GROQ_API_KEY
+        plain_llm = ChatGroq(model=GROQ_REPORTER_MODEL, api_key=GROQ_API_KEY, temperature=0.3)
+        plain_llm_task = asyncio.create_task(
+            plain_llm.ainvoke(f"Please answer this query directly without using any external tools or web search. Give a concise but complete answer:\n\n{query}")
+        )
+        plain_llm_sent = False
+
         # We'll run each node manually to emit progress events
         from agents.router import router_node
         from agents.planner import planner_node
@@ -121,6 +130,14 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
         })
 
         if state.get("is_casual"):
+            if not plain_llm_sent:
+                try:
+                    plain_res = await plain_llm_task
+                    yield sse_event("plain_llm_done", {"response": plain_res.content, "timestamp": time.time()})
+                except Exception as e:
+                    logger.error(f"Plain LLM failed: {e}")
+                    yield sse_event("plain_llm_done", {"response": "Failed to generate plain LLM response.", "timestamp": time.time()})
+            
             yield sse_event("complete", {
                 "report": state.get("final_report", ""),
                 "confidence": 1.0,
@@ -239,6 +256,16 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
         })
 
         # Complete
+        
+        # Ensure plain LLM is sent if it hasn't been already
+        if not plain_llm_sent:
+            try:
+                plain_res = await plain_llm_task
+                yield sse_event("plain_llm_done", {"response": plain_res.content, "timestamp": time.time()})
+            except Exception as e:
+                logger.error(f"Plain LLM failed: {e}")
+                yield sse_event("plain_llm_done", {"response": "Failed to generate plain LLM response.", "timestamp": time.time()})
+
         yield sse_event("complete", {
             "report": state.get("final_report", ""),
             "confidence": round(state.get("confidence_score", 0.0), 3),

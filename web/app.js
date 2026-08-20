@@ -269,19 +269,23 @@ function logDone(data) {
     item.classList.remove('active-item'); item.classList.add('done-item');
     const r = data.result || {};
     let txt = '';
-    if (r.tone) txt = `Tone: ${r.tone}`;
-    if (r.plan && r.plan.length) txt = `${r.plan.length} sub-tasks planned`;
-    if (r.sources_found !== undefined) txt = `${r.sources_found} sources retrieved`;
-    if (r.docs_retrieved !== undefined) txt = `${r.docs_retrieved} docs from Qdrant`;
+    if (r.tone) txt = `Tone: <strong>${r.tone}</strong>`;
+    if (r.plan && r.plan.length) {
+      txt = `<strong>${r.plan.length} sub-tasks planned:</strong><br><ul style="margin: 4px 0 0 16px; padding: 0;">` + r.plan.map(t => `<li style="margin-bottom: 2px;">${t}</li>`).join('') + `</ul>`;
+    }
+    if (r.sources_found !== undefined) txt = `<strong>${r.sources_found} sources retrieved</strong> via parallel web search`;
+    if (r.docs_retrieved !== undefined) txt = `<strong>${r.docs_retrieved} docs</strong> retrieved from Qdrant vector store`;
     if (r.confidence !== undefined) {
-      txt = `Score: ${r.confidence} — ${r.passed ? '✓ passed threshold' : '↻ looping for depth'}`;
+      txt = `<strong>Score: ${r.confidence}</strong> — ${r.passed ? '<span style="color:var(--emerald)">✓ passed threshold</span>' : '<span style="color:var(--rose)">↻ looping for depth</span>'}<br><em>Critique: ${r.critique}</em>`;
       updateConfidence(r.confidence);
     }
-    if (r.report_length) txt = `${r.report_length.toLocaleString()} chars generated`;
+    if (r.report_length) txt = `<strong>${r.report_length.toLocaleString()} chars generated</strong>`;
+    
     if (txt) {
       const content = item.querySelector('.activity-content');
       const res = document.createElement('div');
-      res.className = 'activity-result'; res.textContent = txt;
+      res.className = 'activity-result'; 
+      res.innerHTML = txt;
       content.appendChild(res);
     }
   }
@@ -446,6 +450,16 @@ function handleSSE(event, data) {
     case 'error':
       onError(data);
       break;
+    case 'plain_llm_done':
+      showPlainLLM(data);
+      break;
+  }
+}
+
+function showPlainLLM(data) {
+  const container = document.getElementById('plain-llm-body');
+  if (container) {
+    container.innerHTML = md2html(data.response || '');
   }
 }
 
@@ -501,6 +515,12 @@ async function startResearch() {
   document.getElementById('conf-fill').style.width = '0%';
   document.getElementById('report-placeholder').style.display = 'flex';
   document.getElementById('report-content').classList.remove('visible');
+  
+  const plainBody = document.getElementById('plain-llm-body');
+  if (plainBody) plainBody.innerHTML = '<div class="loading-pulse">Thinking...</div>';
+  const reportBody = document.getElementById('report-body');
+  if (reportBody) reportBody.innerHTML = '<div class="loading-pulse">Agents are researching...</div>';
+
   document.getElementById('copy-btn').style.display = 'none';
   document.getElementById('download-btn').style.display = 'none';
   document.getElementById('live-label').textContent = 'LIVE';

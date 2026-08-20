@@ -160,8 +160,21 @@
           <div class="placeholder-text">Report will appear here<br/>as agents complete their work</div>
         </div>
         <div class="report-content" id="report-content">
-          <div class="report-meta" id="report-meta"></div>
-          <div id="report-body"></div>
+          <div class="split-view">
+            <div class="split-col plain-llm-col">
+              <div class="split-header">Plain LLM (No Web Search)</div>
+              <div class="split-body" id="plain-llm-body">
+                <div class="loading-pulse">Thinking...</div>
+              </div>
+            </div>
+            <div class="split-col neuraldesk-col">
+              <div class="split-header">NeuralDesk (6-Agent Pipeline)</div>
+              <div class="report-meta" id="report-meta"></div>
+              <div class="split-body" id="report-body">
+                <div class="loading-pulse">Agents are researching...</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
