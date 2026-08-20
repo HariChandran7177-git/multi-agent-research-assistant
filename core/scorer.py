@@ -122,9 +122,12 @@ def calculate_retrieval_relevance(qdrant_scores: list) -> float:
     """
     Uses Qdrant's own cosine similarity scores from the retrieval step.
     These are the most reliable signal - directly measure query-document match.
+    Default 0.4 (not 0.65) when scores are unavailable — honest penalty for
+    missing retrieval data, prevents thin research from passing as confident.
     """
     if not qdrant_scores:
-        return 0.65  # neutral default when scores not available
+        logger.warning("[Scorer] No Qdrant scores available — using penalty default 0.4")
+        return 0.4  # Honest penalty: missing retrieval data should lower confidence
 
     score = sum(qdrant_scores) / len(qdrant_scores)
     logger.debug(f"[Scorer] Retrieval relevance (Qdrant avg): {score:.2f} over {len(qdrant_scores)} docs")

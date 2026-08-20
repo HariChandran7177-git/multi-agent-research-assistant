@@ -11,9 +11,9 @@ from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_WAIT_MIN
 load_dotenv()
 logger = get_logger(__name__)
 
-# Use same model as the rest of the pipeline — compound-mini was unreliable
+# Use groq/compound-mini for fast routing decisions
 llm = ChatGroq(
-    model=GROQ_MODEL,
+    model="groq/compound-mini",
     api_key=GROQ_API_KEY,
     temperature=0.1,
 )

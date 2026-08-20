@@ -46,17 +46,21 @@ def researcher_node(state):
 
     logger.info(f"Starting parallel research for {len(plan)} sub-tasks")
 
-    # Use ThreadPoolExecutor to run tasks concurrently
+    # Use as_completed so each thread has its own try/except — one failure won't
+    # silently kill the batch or return None (executor.map() would do that)
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        # Map tasks to executor
-        results_nested = list(executor.map(_process_task, plan))
-        
-    # Flatten the results
-    for res_list in results_nested:
-        all_results.extend(res_list)
+        future_to_task = {executor.submit(_process_task, task): task for task in plan}
+        for future in concurrent.futures.as_completed(future_to_task):
+            task = future_to_task[future]
+            try:
+                result = future.result(timeout=30)
+                all_results.extend(result)
+            except concurrent.futures.TimeoutError:
+                logger.error(f"Task '{task}' timed out after 30s — skipping")
+            except Exception as e:
+                logger.error(f"Task '{task}' failed: {e} — skipping")
 
-    logger.info(
-        f"Research complete — {len(all_results)} total results gathered")
+    logger.info(f"Research complete — {len(all_results)} total results gathered")
     state["research_results"] = all_results
     return state
 

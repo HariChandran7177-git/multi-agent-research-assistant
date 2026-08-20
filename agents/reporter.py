@@ -7,57 +7,70 @@ from core.logger import get_logger
 
 load_dotenv()
 
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_WAIT_MIN, RETRY_WAIT_MAX
+from core.config import GROQ_MODEL, GROQ_REPORTER_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_WAIT_MIN, RETRY_WAIT_MAX
 
 logger = get_logger(__name__)
 
+# Use a separate, lighter model for report writing to avoid rate limits on groq/compound
 llm = ChatGroq(
-    model=GROQ_MODEL,
+    model=GROQ_REPORTER_MODEL,
     api_key=GROQ_API_KEY,
     temperature=0.4,
 )
 
-REPORTER_PROMPT = """You are a highly knowledgeable research assistant. 
-Your instructed tone for this report is: "{tone}". 
-Ensure that you strictly follow this tone (e.g., if it says "super friendly", be very casual and use jokes. If it says "professional", be formal).
-If you ever need to use a complex, technical, or "hard" word (jargon) that doesn't fit the tone, pause to explain it simply before moving on.
+REPORTER_PROMPT = """You are writing a research report. Follow these instructions in order.
 
-Original query: {query}
+## TONE (follow this first, before anything else)
+Write in this exact style: **{tone}**
+Examples of what this means in practice:
+- "ELI5": use analogies like "imagine a pizza delivery...", zero jargon
+- "senior software engineer": be precise, skip basics, use technical terms freely
+- "academic": cite sources inline, use formal language, structured sections
+- "funny": use wit and humour while still being accurate
+- "professional and informative": clear, factual, no filler phrases
 
-Research plan (sub-tasks investigated):
+## YOUR QUERY
+{query}
+
+## RESEARCH PLAN (sub-tasks that were investigated)
 {plan}
 
-Research findings:
+## RESEARCH FINDINGS (use specific facts, names, numbers from here)
 {research_results}
 
-Most relevant retrieved documents:
+## TOP RETRIEVED DOCUMENTS
 {retrieved_docs}
 
-Write a report answering the query. The FORMAT must be chosen based purely on 
-what the question actually needs — don't force a fixed template. Pick whichever 
-of the following elements genuinely fit, and skip the ones that don't:
+## FORMAT RULES
+Choose format based on what the content needs — not habit:
+- Use a **comparison table** if comparing 2+ options
+- Use **numbered steps** if explaining a process
+- Use **bullet points** for scannable key facts
+- Use **paragraphs** for explanations and analysis
+- Do NOT use generic headers like "Introduction" or "Conclusion" — use content-specific headers
 
-- **Comparison table** — use when comparing 2+ things
-- **Hierarchy / nested bullets** — use when explaining categories
-- **Flowchart** — use when explaining a process. Write it as a Mermaid diagram in a ```mermaid code block
-- **Timeline** — use for anything involving dates or history
-- **Bulleted key facts** — use for scannable lists of findings
-- **Plain narrative paragraphs** — use for explanations
+## CONTENT RULES
+- Open by directly addressing the query — no preamble
+- Bold specific names, numbers, and key facts: **AWS holds 31% market share**
+- Use real data from the research above — no invented examples
+- End with a "## Bottom Line" section: one sharp paragraph wrapping up the key takeaway
+- Final section "## Sources": bullet list of markdown links from URLs in the research data
 
-Additional rules:
-- Do NOT use generic labels like "Introduction," "Key Findings," or "Conclusion." Use headers tied to the content.
-- Open directly by addressing the user's question.
-- Use bold for specific names, numbers, and key facts so they stand out.
-- End with a short "Bottom line" that wraps up the report.
-- Never mention "sub-tasks," "the plan," or any internal process — just share what you learned.
-- Use specific facts, names, and figures from the research above.
-- **Sources & References**: At the very end of your report, include a section titled "Sources & References". Extract the URLs from the research findings and present them as a bulleted list of clickable Markdown links: `- [Source Title](URL)`. Only use URLs actually present in the provided research data.
-
-Write in the specified tone: {tone}
+Write the full report now in the tone: **{tone}**
 """
 
 
-@retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=1, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX))
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+def _is_rate_limit(exc):
+    return "rate" in str(exc).lower() or "429" in str(exc)
+
+@retry(
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=2, min=8, max=60),
+    retry=retry_if_exception_type(Exception),
+    reraise=True,
+)
 def invoke_with_retry(llm, prompt):
     return llm.invoke(prompt)
 
