@@ -317,12 +317,8 @@ async def research_stream(request: ResearchRequest):
 async def research_sync(request: ResearchRequest):
     """Synchronous fallback — waits for full pipeline then returns."""
     try:
-        import sys
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-        from core.graph import build_graph
         from core.state import ResearchState
 
-        graph = build_graph()
         initial_state: ResearchState = {
             "query": request.query,
             "plan": [],
@@ -333,7 +329,7 @@ async def research_sync(request: ResearchRequest):
             "iteration_count": 0,
             "final_report": "",
         }
-        final_state = graph.invoke(initial_state)
+        final_state = compiled_graph.invoke(initial_state)
         return {
             "report": final_state.get("final_report", ""),
             "confidence": final_state.get("confidence_score", 0.0),
@@ -343,9 +339,7 @@ async def research_sync(request: ResearchRequest):
     except Exception as e:
         return {"error": str(e), "report": "Pipeline failed. Check your API keys."}
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "service": "neuraldesk-research"}
+
 
 # Mount static files at root / so style.css and app.js resolve correctly when visiting /
 if os.path.exists(FRONTEND_DIR):
