@@ -66,8 +66,9 @@ def reporter_node(state: ResearchState) -> ResearchState:
     logger.info("Writing final report")
 
     plan_text = "\n".join(state.get("plan", []))
-    research_text = "\n".join(state.get("research_results", []))[:8000]
-    docs_text = "\n".join(state.get("retrieved_docs", []))[:8000]
+    # Truncate aggressively to stay under Groq token limits
+    research_text = "\n".join(state.get("research_results", []))[:4000]
+    docs_text = "\n".join(state.get("retrieved_docs", []))[:3000]
     tone = state.get("tone", "super friendly and conversational")
 
     prompt = REPORTER_PROMPT.format(
@@ -84,12 +85,23 @@ def reporter_node(state: ResearchState) -> ResearchState:
         logger.info("Report generated successfully")
     except Exception as e:
         logger.error(f"LLM call failed after retries: {e}")
-        state["final_report"] = (
-            "We were unable to generate a final report due to a technical issue "
-            f"with the report-writing service. Error: {e}"
-        )
+        # Return a meaningful markdown fallback so the frontend still renders
+        state["final_report"] = f"""# Research Results for: {state['query']}
+
+> ⚠️ The report writer hit a rate limit. Here are the raw research findings:
+
+## Research Plan
+{plan_text}
+
+## Key Findings
+{research_text[:2000]}
+
+---
+*Report generation failed due to API rate limits. Try again in a minute.*
+"""
 
     return state
+
 
 
 if __name__ == "__main__":

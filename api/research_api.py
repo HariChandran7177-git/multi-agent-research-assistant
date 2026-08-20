@@ -311,6 +311,10 @@ async def research_sync(request: ResearchRequest):
     except Exception as e:
         return {"error": str(e), "report": "Pipeline failed. Check your API keys."}
 
+@app.get("/health")
+async def health():
+    return {"status": "ok", "service": "neuraldesk-research"}
+
 # Mount static files at root / so style.css and app.js resolve correctly when visiting /
 if os.path.exists(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")

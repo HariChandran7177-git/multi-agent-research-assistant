@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: neuraldesk-research
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.research_api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    healthCheckPath: /health
+    autoDeploy: true
