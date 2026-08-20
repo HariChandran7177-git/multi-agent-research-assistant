@@ -77,4 +77,3 @@ virtualenv==21.5.1
 websockets==15.0.1
 xxhash==3.8.0
 zstandard==0.25.0
-streamlit==1.60.0
