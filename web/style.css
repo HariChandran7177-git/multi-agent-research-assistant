@@ -485,8 +485,8 @@ nav {
   font-weight: 700; letter-spacing: -.02em;
 }
 .dashboard-body {
-  display: grid; grid-template-columns: 1fr 380px;
-  gap: 24px; align-items: start;
+  display: flex; flex-direction: column;
+  gap: 24px; align-items: stretch;
 }
 .report-panel {
   border-radius: var(--radius-md);
@@ -951,7 +951,6 @@ footer {
   .pipeline-grid { grid-template-columns: repeat(2,1fr); }
   .stats-inner { grid-template-columns: repeat(2,1fr); }
   .tech-grid { grid-template-columns: repeat(2,1fr); }
-  .dashboard-body { grid-template-columns: 1fr; }
   .pipeline-vis { grid-template-columns: repeat(3,1fr); gap: 16px; }
 }
 @media (max-width: 768px) {
