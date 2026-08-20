@@ -7,7 +7,7 @@ from core.logger import get_logger
 
 load_dotenv()
 
-from core.config import GROQ_MODEL, GROQ_REPORTER_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_WAIT_MIN, RETRY_WAIT_MAX
+from core.config import GROQ_MODEL, GROQ_REPORTER_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX
 
 logger = get_logger(__name__)
 
@@ -66,8 +66,8 @@ def _is_rate_limit(exc):
     return "rate" in str(exc).lower() or "429" in str(exc)
 
 @retry(
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=2, min=8, max=60),
+    stop=stop_after_attempt(RETRY_ATTEMPTS),
+    wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX),
     retry=retry_if_exception_type(Exception),
     reraise=True,
 )

@@ -8,7 +8,7 @@ from core.logger import get_logger
 
 load_dotenv()
 
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_WAIT_MIN, RETRY_WAIT_MAX, TAVILY_MAX_RESULTS
+from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, TAVILY_MAX_RESULTS
 
 logger = get_logger(__name__)
 
@@ -16,7 +16,7 @@ tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 llm = ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY)
 
 
-@retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=1, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX))
+@retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX))
 def search_with_retry(client, task):
     # Ensure clean query without prefixes
     clean_task = task.strip().lstrip("0123456789.-*#\t ")

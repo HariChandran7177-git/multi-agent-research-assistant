@@ -6,7 +6,7 @@ from core.state import ResearchState
 from core.logger import get_logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_WAIT_MIN, RETRY_WAIT_MAX
+from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -40,7 +40,7 @@ Return ONLY a valid JSON object, no markdown:
 {{"is_casual": <true|false>, "response": "<if casual: your answer, else empty string>", "tone": "<detected tone string>"}}
 """
 
-@retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=4))
+@retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX))
 def invoke_with_retry(llm, prompt):
     return llm.invoke(prompt)
 

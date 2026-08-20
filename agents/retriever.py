@@ -17,14 +17,19 @@ embeddings = GoogleGenerativeAIEmbeddings(
 )
 
 def get_qdrant_client():
-    """Initialize Qdrant client with fallback to in‑memory if remote connection fails."""
+    """Initialize Qdrant client."""
     try:
         client = QdrantClient(url=os.getenv("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
+        # Verify the connection actually works, not just that the client object was created
+        client.get_collections()
         logger.info("Connected to remote Qdrant instance.")
         return client
     except Exception as e:
-        logger.warning(f"Remote Qdrant connection failed ({e}); falling back to in‑memory client.")
-        return QdrantClient(":memory:")
+        logger.error(f"CRITICAL: Qdrant connection failed, cannot proceed with retrieval: {e}")
+        raise RuntimeError(
+            f"Qdrant is unreachable. Refusing to silently fall back to in-memory storage, "
+            f"which would produce empty/incorrect retrieval results. Original error: {e}"
+        )
 
 qdrant = get_qdrant_client()
 COLLECTION_NAME = "research_docs"
@@ -49,13 +54,19 @@ def ensure_collection():
             logger.debug(f"Payload index creation skipped or failed ({e}); may be in‑memory client.")
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=4, max=30))
 def upsert_with_retry(qdrant, collection_name, points):
     return qdrant.upsert(collection_name=collection_name, points=points)
 
 
 def retriever_node(state):
-    ensure_collection()
+    try:
+        ensure_collection()
+    except RuntimeError as e:
+        logger.error(f"Retriever failed: {e}")
+        state["retrieved_docs"] = state.get("research_results", [])[:5]  # fallback to raw research
+        state["retrieval_degraded"] = True  # flag so Critic/Reporter know quality may be lower
+        return state
 
     session_id = str(uuid.uuid4())  # unique tag for THIS run only
 

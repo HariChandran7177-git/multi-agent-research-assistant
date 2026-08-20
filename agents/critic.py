@@ -9,7 +9,7 @@ from core.scorer import calculate_objective_score, calculate_hybrid_score
 
 load_dotenv()
 
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_WAIT_MIN, RETRY_WAIT_MAX
+from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX
 
 logger = get_logger(__name__)
 
@@ -43,7 +43,7 @@ Respond ONLY with valid JSON in this exact format, with no markdown fences or ex
 """
 
 
-@retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=1, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX))
+@retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX))
 def invoke_with_retry(llm, prompt):
     return llm.invoke(prompt)
 

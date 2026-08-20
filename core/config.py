@@ -14,7 +14,8 @@ MAX_ITERATIONS = 3
 
 # Retry settings — longer waits to handle rate limits
 RETRY_ATTEMPTS = 3
-RETRY_WAIT_MIN = 5
+RETRY_MULTIPLIER = 2
+RETRY_WAIT_MIN = 4
 RETRY_WAIT_MAX = 30
 
 # Search settings

@@ -25,6 +25,11 @@ from pydantic import BaseModel
 # ── Add root to path so we can import core / agents ──────────────────────────
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from core.graph import build_graph
+
+# Compile graph once at startup
+compiled_graph = build_graph()
+
 app = FastAPI(
     title="Multi-Agent Research Assistant",
     version="2.0.0",
@@ -82,9 +87,9 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
         })
 
         loop = asyncio.get_event_loop()
-
-        # Build graph
-        graph = await loop.run_in_executor(None, build_graph)
+        
+        # We use the globally compiled graph
+        graph = compiled_graph
 
         initial_state: ResearchState = {
             "query": query,
