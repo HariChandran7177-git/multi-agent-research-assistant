@@ -3,7 +3,10 @@
    Multi-Agent Research Assistant Frontend Logic
 ───────────────────────────────────────────────────────── */
 
-const API_BASE = 'http://localhost:8000';
+// Auto-detect API base: same origin on Render, localhost:8000 in local dev
+const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://localhost:8000'
+  : window.location.origin;
 
 // ─────────────────────────────────────────────────────────
 //  PARTICLE CANVAS
