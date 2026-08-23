@@ -25,7 +25,15 @@ from pydantic import BaseModel
 # ── Add root to path so we can import core / agents ──────────────────────────
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import re
+from core.logger import get_logger
 from core.graph import build_graph
+
+logger = get_logger(__name__)
+QUERY_CACHE = {}
+
+def get_cache_key(query: str) -> str:
+    return re.sub(r'\s+', ' ', query.strip().lower())
 
 # Compile graph once at startup
 compiled_graph = build_graph()
@@ -64,6 +72,7 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
     Run the real LangGraph pipeline, emitting SSE events at each stage.
     Falls back to mock mode if API keys are not configured.
     """
+    cache_key = get_cache_key(query)
 
     async def send(event: str, **kwargs):
         yield sse_event(event, {"timestamp": time.time(), **kwargs})
@@ -71,6 +80,11 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
     # ── Stage 0: start ────────────────────────────────────────────────────────
     yield sse_event("start", {"query": query, "timestamp": time.time()})
     await asyncio.sleep(0.1)
+    
+    if cache_key in QUERY_CACHE:
+        logger.info(f"Cache hit for query: {query}")
+        yield sse_event("complete", QUERY_CACHE[cache_key])
+        return
 
     try:
         # Import pipeline
@@ -143,14 +157,17 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
                     logger.error(f"Plain LLM failed: {e}")
                     yield sse_event("plain_llm_done", {"response": "Failed to generate plain LLM response.", "timestamp": time.time()})
             
-            yield sse_event("complete", {
+            complete_payload = {
                 "report": state.get("final_report", ""),
                 "confidence": 1.0,
                 "iterations": 0,
                 "tone": state.get("tone", "casual"),
                 "is_casual": True,
                 "timestamp": time.time(),
-            })
+            }
+            QUERY_CACHE[cache_key] = complete_payload
+            logger.info(f"Cache miss for query: {query}. Stored in cache.")
+            yield sse_event("complete", complete_payload)
             return
 
         await asyncio.sleep(0.2)
@@ -271,7 +288,7 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
                 logger.error(f"Plain LLM failed: {e}")
                 yield sse_event("plain_llm_done", {"response": "Failed to generate plain LLM response.", "timestamp": time.time()})
 
-        yield sse_event("complete", {
+        complete_payload = {
             "report": state.get("final_report", ""),
             "confidence": round(state.get("confidence_score", 0.0), 3),
             "iterations": state.get("iteration_count", 0),
@@ -279,7 +296,10 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
             "is_casual": False,
             "score_breakdown": state.get("score_breakdown", {}),
             "timestamp": time.time(),
-        })
+        }
+        QUERY_CACHE[cache_key] = complete_payload
+        logger.info(f"Cache miss for query: {query}. Stored in cache.")
+        yield sse_event("complete", complete_payload)
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -316,6 +336,17 @@ async def research_stream(request: ResearchRequest):
 @app.post("/research")
 async def research_sync(request: ResearchRequest):
     """Synchronous fallback — waits for full pipeline then returns."""
+    cache_key = get_cache_key(request.query)
+    if cache_key in QUERY_CACHE:
+        logger.info(f"Cache hit for query: {request.query}")
+        cached = QUERY_CACHE[cache_key]
+        return {
+            "report": cached.get("report", ""),
+            "confidence": cached.get("confidence", 0.0),
+            "iterations": cached.get("iterations", 0),
+            "tone": cached.get("tone", "professional"),
+        }
+        
     try:
         from core.state import ResearchState
 
@@ -330,12 +361,17 @@ async def research_sync(request: ResearchRequest):
             "final_report": "",
         }
         final_state = compiled_graph.invoke(initial_state)
-        return {
+        
+        # Store in cache for future calls
+        complete_payload = {
             "report": final_state.get("final_report", ""),
             "confidence": final_state.get("confidence_score", 0.0),
             "iterations": final_state.get("iteration_count", 0),
             "tone": final_state.get("tone", "professional"),
         }
+        QUERY_CACHE[cache_key] = complete_payload
+        logger.info(f"Cache miss for query: {request.query}. Stored in cache.")
+        return complete_payload
     except Exception as e:
         return {"error": str(e), "report": "Pipeline failed. Check your API keys."}
 
