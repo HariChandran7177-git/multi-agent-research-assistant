@@ -70,9 +70,21 @@ def retriever_node(state):
 
     session_id = str(uuid.uuid4())  # unique tag for THIS run only
 
+    from core.config import MAX_ITERATIONS
+
     texts = state["research_results"]
     logger.info(f"Embedding {len(texts)} research results")
-    vectors = embeddings.embed_documents(texts)
+    try:
+        vectors = embeddings.embed_documents(texts)
+    except Exception as e:
+        logger.error(f"Error embedding content ({type(e).__name__}): {e}")
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            logger.warning("Gemini rate limit hit during embedding. Degrading retrieval and preventing further loops.")
+            state["retrieved_docs"] = texts[:5]
+            state["retrieval_degraded"] = True
+            state["iteration_count"] = MAX_ITERATIONS  # Prevent looping
+            return state
+        raise
 
     points = [
         PointStruct(
@@ -91,7 +103,18 @@ def retriever_node(state):
         state["retrieved_docs"] = texts[:5]
         return state
 
-    query_vector = embeddings.embed_query(state["query"])
+    try:
+        query_vector = embeddings.embed_query(state["query"])
+    except Exception as e:
+        logger.error(f"Error embedding query ({type(e).__name__}): {e}")
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            logger.warning("Gemini rate limit hit during query embedding. Degrading retrieval and preventing further loops.")
+            state["retrieved_docs"] = texts[:5]
+            state["retrieval_degraded"] = True
+            state["iteration_count"] = MAX_ITERATIONS
+            return state
+        raise
+
     results = qdrant.query_points(
         collection_name=COLLECTION_NAME,
         query=query_vector,
