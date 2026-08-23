@@ -20,6 +20,8 @@
 
   <br/><br/>
 
+  🔗 **[Live Demo →](https://multi-agent-research-assistant.onrender.com)**
+
   [**📖 How It Works**](#️-architecture--workflow) · [**🚀 Quickstart**](#-quickstart) · [**💡 Features**](#-features) · [**📄 Sample Output**](#-sample-output) · [**🤝 Contributing**](CONTRIBUTING.md)
 
 </div>
@@ -55,7 +57,7 @@
   </tr>
   <tr>
     <td>🛡️ <strong>Production-Grade Reliability</strong></td>
-    <td>Exponential-backoff retries on all LLM/API calls. Qdrant auto-falls back to in-memory if the cloud instance is unreachable.</td>
+    <td>Exponential-backoff retries (multiplier=2, 4–30s) on all LLM/API calls. Qdrant connectivity is verified at startup — if unreachable the app fails loudly rather than silently degrading to in-memory storage. The LangGraph pipeline is compiled once at startup, not per-request.</td>
   </tr>
 </table>
 
@@ -241,12 +243,14 @@ Tests are designed to mock all external APIs (Groq, Tavily, Qdrant) — no real 
 
 ## 🔮 Roadmap
 
-- [ ] **Streamlit UI** — Interactive web interface for non-CLI users
-- [ ] **FastAPI endpoint** — `POST /research` REST API
+- [x] **FastAPI + SSE streaming** — Real-time agent progress streamed to the browser
+- [x] **Web UI** — Live frontend with per-agent status cards and confidence meters
+- [x] **Production hardening** — Qdrant startup check, single graph compilation, longer retry backoff
 - [ ] **LangSmith tracing** — Full observability into every agent step
 - [ ] **OpenAI / Anthropic support** — Swap LLM backends via config
 - [ ] **Memory across sessions** — Let the agent remember past research
 - [ ] **Export to PDF** — One-click export of final reports
+- [ ] **Human-in-the-loop** — Pause the loop and let the user steer research direction
 
 ---
 
