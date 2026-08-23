@@ -173,6 +173,15 @@
               <div class="split-body" id="report-body">
                 <div class="loading-pulse">Agents are researching...</div>
               </div>
+              <!-- NEW DOUBT BOX -->
+              <div class="doubt-box" id="doubt-box" style="display:none; margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                <div style="font-weight: 600; margin-bottom: 8px; font-size: 0.9em; color: var(--emerald);">Ask about this report</div>
+                <div style="display: flex; gap: 8px;">
+                  <input type="text" id="doubt-input" placeholder="What does this report say about X?" style="flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.3); color: white; font-family: inherit;">
+                  <button onclick="askDoubt()" id="doubt-btn" style="padding: 8px 16px; border-radius: 6px; background: var(--emerald); color: black; border: none; font-weight: 600; cursor: pointer; transition: opacity 0.2s;">Ask</button>
+                </div>
+                <div id="doubt-answer" style="margin-top: 10px; font-size: 0.95em; color: #ddd; display: none; line-height: 1.5;"></div>
+              </div>
             </div>
           </div>
         </div>

@@ -60,6 +60,9 @@ FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "we
 class ResearchRequest(BaseModel):
     query: str
 
+class DoubtRequest(BaseModel):
+    report: str
+    question: str
 
 # ── SSE event helper ──────────────────────────────────────────────────────────
 def sse_event(event: str, data: dict) -> str:
@@ -83,6 +86,26 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
     
     if cache_key in QUERY_CACHE:
         logger.info(f"Cache hit for query: {query}")
+        
+        # Fast-forward simulation so the frontend animations don't break
+        agents = [
+            ("router", "🔀", "Router", "Cache hit: Bypassing execution"),
+            ("planner", "📋", "Planner", "Cache hit: Bypassing execution"),
+            ("researcher", "⚡", "Researcher", "Cache hit: Bypassing execution"),
+            ("retriever", "🧠", "Retriever", "Cache hit: Bypassing execution"),
+            ("critic", "🧐", "Critic", "Cache hit: Bypassing execution"),
+            ("reporter", "📝", "Reporter", "Cache hit: Bypassing execution")
+        ]
+        
+        for agent_id, icon, label, msg in agents:
+            yield sse_event("agent_start", {
+                "agent": agent_id, "icon": icon, "label": label, "message": msg, "timestamp": time.time()
+            })
+            await asyncio.sleep(0.05)
+            yield sse_event("agent_done", {
+                "agent": agent_id, "label": label, "result": {"cached": True}, "timestamp": time.time()
+            })
+            
         yield sse_event("complete", QUERY_CACHE[cache_key])
         return
 
@@ -375,7 +398,16 @@ async def research_sync(request: ResearchRequest):
     except Exception as e:
         return {"error": str(e), "report": "Pipeline failed. Check your API keys."}
 
-
+@app.post("/doubt")
+async def doubt_sync(request: DoubtRequest):
+    """Answer questions strictly based on the generated report."""
+    try:
+        from agents.doubt import answer_doubt
+        loop = asyncio.get_event_loop()
+        answer = await loop.run_in_executor(None, answer_doubt, request.report, request.question)
+        return {"answer": answer}
+    except Exception as e:
+        return {"error": str(e), "answer": "Failed to process doubt."}
 
 # Mount static files at root / so style.css and app.js resolve correctly when visiting /
 if os.path.exists(FRONTEND_DIR):

@@ -387,6 +387,9 @@ function showReport(data) {
   document.getElementById('report-body').innerHTML = md2html(_currentReport);
   document.getElementById('copy-btn').style.display = 'block';
   document.getElementById('download-btn').style.display = 'block';
+  document.getElementById('doubt-box').style.display = 'block';
+  document.getElementById('doubt-input').value = '';
+  document.getElementById('doubt-answer').style.display = 'none';
   updateConfidence(data.confidence);
 }
 
@@ -416,6 +419,10 @@ function resetDashboard() {
   document.getElementById('report-body').innerHTML = '';
   document.getElementById('copy-btn').style.display = 'none';
   document.getElementById('download-btn').style.display = 'none';
+  const doubtBox = document.getElementById('doubt-box');
+  if (doubtBox) doubtBox.style.display = 'none';
+  const doubtAnswer = document.getElementById('doubt-answer');
+  if (doubtAnswer) doubtAnswer.style.display = 'none';
   document.querySelectorAll('.pipe-node').forEach(n => n.classList.remove('active','done'));
   document.getElementById('live-label').textContent = 'LIVE';
   document.getElementById('live-dot').style.cssText = '';
@@ -424,6 +431,47 @@ function resetDashboard() {
   _currentReport = '';
   document.getElementById('hero').scrollIntoView({ behavior: 'smooth' });
 }
+
+// ─────────────────────────────────────────────────────────
+//  ASK ABOUT THIS REPORT (DOUBT)
+// ─────────────────────────────────────────────────────────
+async function askDoubt() {
+  const question = document.getElementById('doubt-input').value.trim();
+  if (!question) return;
+  
+  const btn = document.getElementById('doubt-btn');
+  const ansDiv = document.getElementById('doubt-answer');
+  
+  btn.disabled = true;
+  btn.style.opacity = '0.7';
+  btn.textContent = '...';
+  
+  ansDiv.style.display = 'block';
+  ansDiv.innerHTML = '<span class="loading-pulse">Analyzing report...</span>';
+  
+  try {
+    const resp = await fetch(`${API_BASE}/doubt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ report: _currentReport, question })
+    });
+    const data = await resp.json();
+    ansDiv.innerHTML = `<strong style="color:var(--emerald)">Answer:</strong> ${data.answer}`;
+  } catch (err) {
+    ansDiv.innerHTML = `<span style="color:var(--rose)">Error: ${err.message}</span>`;
+  }
+  
+  btn.disabled = false;
+  btn.style.opacity = '1';
+  btn.textContent = 'Ask';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const di = document.getElementById('doubt-input');
+  if (di) di.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); askDoubt(); }
+  });
+});
 
 // ─────────────────────────────────────────────────────────
 //  SSE EVENT HANDLER
