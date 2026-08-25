@@ -173,6 +173,13 @@
               <div class="split-body" id="report-body">
                 <div class="loading-pulse">Agents are researching...</div>
               </div>
+              
+              <!-- HUMAN IN THE LOOP BOX -->
+              <div class="hitl-box" id="hitl-box" style="display:none; margin-top: 15px; padding: 15px; background: rgba(234, 179, 8, 0.1); border-radius: 8px; border: 1px solid rgba(234, 179, 8, 0.2);">
+                <div style="font-weight: 600; margin-bottom: 8px; font-size: 0.95em; color: #eab308;">Human Review Required</div>
+                <div style="font-size: 0.9em; margin-bottom: 12px; color: #ddd;" id="hitl-msg">The agents have finished their research. Do you want them to write the final report now?</div>
+                <button onclick="resumeHitl()" id="hitl-btn" style="padding: 8px 16px; border-radius: 6px; background: #eab308; color: black; border: none; font-weight: 600; cursor: pointer; transition: opacity 0.2s;">Yes, Write Report</button>
+              </div>
               <!-- NEW DOUBT BOX -->
               <div class="doubt-box" id="doubt-box" style="display:none; margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
                 <div style="font-weight: 600; margin-bottom: 8px; font-size: 0.9em; color: var(--emerald);">Ask about this report</div>

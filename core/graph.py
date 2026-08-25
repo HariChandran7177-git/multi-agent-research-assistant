@@ -28,6 +28,8 @@ def route_after_router(state: ResearchState) -> str:
     return "planner"
 
 
+from langgraph.checkpoint.memory import MemorySaver
+
 def build_graph():
     workflow = StateGraph(ResearchState)
 
@@ -70,7 +72,8 @@ def build_graph():
     # Reporter is the final step
     workflow.add_edge("reporter", END)
 
-    return workflow.compile()
+    memory = MemorySaver()
+    return workflow.compile(checkpointer=memory, interrupt_before=["reporter"])
 
 
 if __name__ == "__main__":

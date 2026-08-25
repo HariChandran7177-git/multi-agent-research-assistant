@@ -45,8 +45,16 @@ async def run_evaluation():
         start_time = time.time()
         
         try:
+            # Provide thread_id since we added a checkpointer
+            config = {"configurable": {"thread_id": f"eval-{i}"}}
+            
             # We use ainvoke to run the full graph locally
-            final_state = await graph.ainvoke(initial_state)
+            # This will run until it is interrupted before 'reporter'
+            state_dict = await graph.ainvoke(initial_state, config=config)
+            
+            # Since the graph pauses before 'reporter' (HitL), we need to resume it
+            final_state = await graph.ainvoke(None, config=config)
+            
             duration = time.time() - start_time
             
             is_casual = final_state.get("is_casual", False)

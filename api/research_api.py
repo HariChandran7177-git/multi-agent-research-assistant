@@ -31,6 +31,7 @@ from core.graph import build_graph
 
 logger = get_logger(__name__)
 QUERY_CACHE = {}
+RESUME_EVENTS = {}
 
 def get_cache_key(query: str) -> str:
     return re.sub(r'\s+', ' ', query.strip().lower())
@@ -64,6 +65,9 @@ class DoubtRequest(BaseModel):
     report: str
     question: str
 
+class ResumeRequest(BaseModel):
+    thread_id: str
+
 # ── SSE event helper ──────────────────────────────────────────────────────────
 def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
@@ -76,6 +80,9 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
     Falls back to mock mode if API keys are not configured.
     """
     cache_key = get_cache_key(query)
+    import uuid
+    thread_id = str(uuid.uuid4())
+    RESUME_EVENTS[thread_id] = asyncio.Event()
 
     async def send(event: str, **kwargs):
         yield sse_event(event, {"timestamp": time.time(), **kwargs})
@@ -284,6 +291,19 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
             if score >= CONFIDENCE_THRESHOLD or state.get("iteration_count", 0) >= MAX_ITERATIONS:
                 break
 
+        # Human in the Loop (HITL) check
+        yield sse_event("hitl_pause", {
+            "message": "Human review required. Do you want to generate the final report?",
+            "timestamp": time.time(),
+            "thread_id": thread_id,
+        })
+        
+        # Wait for the user to confirm via the /research/resume endpoint
+        await RESUME_EVENTS[thread_id].wait()
+        
+        # Cleanup event
+        del RESUME_EVENTS[thread_id]
+
         # Reporter
         yield sse_event("agent_start", {
             "agent": "reporter",
@@ -383,7 +403,14 @@ async def research_sync(request: ResearchRequest):
             "iteration_count": 0,
             "final_report": "",
         }
-        final_state = compiled_graph.invoke(initial_state)
+        import uuid
+        thread_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        # Run until interrupt
+        compiled_graph.invoke(initial_state, config=config)
+        # Resume to complete the graph
+        final_state = compiled_graph.invoke(None, config=config)
         
         # Store in cache for future calls
         complete_payload = {
@@ -408,6 +435,14 @@ async def doubt_sync(request: DoubtRequest):
         return {"answer": answer}
     except Exception as e:
         return {"error": str(e), "answer": "Failed to process doubt."}
+
+@app.post("/research/resume")
+async def resume_stream(request: ResumeRequest):
+    """Resume the SSE stream for a given thread_id."""
+    if request.thread_id in RESUME_EVENTS:
+        RESUME_EVENTS[request.thread_id].set()
+        return {"status": "resumed"}
+    return {"error": "thread_id not found or expired"}
 
 # Mount static files at root / so style.css and app.js resolve correctly when visiting /
 if os.path.exists(FRONTEND_DIR):

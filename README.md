@@ -59,9 +59,34 @@
     <td>🛡️ <strong>Production-Grade Reliability</strong></td>
     <td>Exponential-backoff retries (multiplier=2, 4–30s) on all LLM/API calls. Qdrant connectivity is verified at startup — if unreachable the app fails loudly rather than silently degrading to in-memory storage. The LangGraph pipeline is compiled once at startup, not per-request.</td>
   </tr>
+  <tr>
+    <td>💾 <strong>Intelligent Caching</strong></td>
+    <td>Repeated queries are served instantly from memory, bypassing API calls entirely and saving costs.</td>
+  </tr>
+  <tr>
+    <td>🙋 <strong>Doubt Box (Follow-ups)</strong></td>
+    <td>Ask specific questions about a generated report. The system strictly grounds answers in the report content without hallucinations.</td>
+  </tr>
+  <tr>
+    <td>⏸️ <strong>Human-in-the-Loop (HitL)</strong></td>
+    <td>Execution pauses gracefully before the final report is generated, allowing the user to approve or redirect the research via the frontend or API. Powered by LangGraph's <code>MemorySaver</code>.</td>
+  </tr>
+  <tr>
+    <td>🔌 <strong>Model Context Protocol (MCP)</strong></td>
+    <td>Ready for deeper integrations to give agents access to local files and external developer tools.</td>
+  </tr>
 </table>
 
 ---
+
+## 🐛 Bugs Found & Fixed
+
+During development and load testing, we discovered and resolved several critical architectural flaws:
+
+1. **Qdrant Connection Isolation:** The Qdrant client was being instantiated per-request rather than globally. This caused file descriptor leaks and connection timeouts. We moved to a global singleton with startup verification.
+2. **Silent Fallback Logic:** The fallback `plain_llm` model was silently overriding genuine network errors, making it look like the multi-agent pipeline succeeded when it actually failed. We exposed clear error states.
+3. **Per-Request Graph Rebuild:** LangGraph's `StateGraph` was being recompiled on every single request. Compiling the graph is expensive; we now compile it once at startup and reuse the instance.
+4. **Gemini Rate-Limiting:** The retriever's embedding process was hitting Google Gemini API rate limits (`429 Too Many Requests`) due to concurrent embedding calls. We implemented a batching mechanism with `Tenacity` exponential backoff.
 
 ## 🏗️ Architecture & Workflow
 
@@ -241,16 +266,20 @@ Tests are designed to mock all external APIs (Groq, Tavily, Qdrant) — no real 
 
 ---
 
-## 🔮 Roadmap
+## 🔮 Roadmap & Completed Milestones
 
+### Completed
 - [x] **FastAPI + SSE streaming** — Real-time agent progress streamed to the browser
 - [x] **Web UI** — Live frontend with per-agent status cards and confidence meters
 - [x] **Production hardening** — Qdrant startup check, single graph compilation, longer retry backoff
+- [x] **Human-in-the-loop** — Pause the loop and let the user steer research direction via `MemorySaver` checkpointer.
+- [x] **Caching mechanism** — Query caching to bypass API calls on repeated questions.
+- [x] **Doubt resolution** — Grounded follow-up answers on generated reports.
+
+### Future Work
 - [ ] **LangSmith tracing** — Full observability into every agent step
 - [ ] **OpenAI / Anthropic support** — Swap LLM backends via config
-- [ ] **Memory across sessions** — Let the agent remember past research
 - [ ] **Export to PDF** — One-click export of final reports
-- [ ] **Human-in-the-loop** — Pause the loop and let the user steer research direction
 
 ---
 

@@ -423,6 +423,8 @@ function resetDashboard() {
   if (doubtBox) doubtBox.style.display = 'none';
   const doubtAnswer = document.getElementById('doubt-answer');
   if (doubtAnswer) doubtAnswer.style.display = 'none';
+  const hitlBox = document.getElementById('hitl-box');
+  if (hitlBox) hitlBox.style.display = 'none';
   document.querySelectorAll('.pipe-node').forEach(n => n.classList.remove('active','done'));
   document.getElementById('live-label').textContent = 'LIVE';
   document.getElementById('live-dot').style.cssText = '';
@@ -474,6 +476,32 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ─────────────────────────────────────────────────────────
+//  HUMAN IN THE LOOP (HITL)
+// ─────────────────────────────────────────────────────────
+let _activeThreadId = null;
+
+async function resumeHitl() {
+  if (!_activeThreadId) return;
+  const btn = document.getElementById('hitl-btn');
+  btn.disabled = true;
+  btn.textContent = 'Resuming...';
+  
+  try {
+    const resp = await fetch(`${API_BASE}/research/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_id: _activeThreadId })
+    });
+    if (!resp.ok) throw new Error('Failed to resume');
+    document.getElementById('hitl-box').style.display = 'none';
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Yes, Write Report';
+    showToast('Failed to resume: ' + err.message, 'error');
+  }
+}
+
+// ─────────────────────────────────────────────────────────
 //  SSE EVENT HANDLER
 // ─────────────────────────────────────────────────────────
 function handleSSE(event, data) {
@@ -501,7 +529,23 @@ function handleSSE(event, data) {
     case 'plain_llm_done':
       showPlainLLM(data);
       break;
+    case 'hitl_pause':
+      showHitlPause(data);
+      break;
   }
+}
+
+function showHitlPause(data) {
+  _activeThreadId = data.thread_id;
+  const box = document.getElementById('hitl-box');
+  if (box) {
+    box.style.display = 'block';
+    const msg = document.getElementById('hitl-msg');
+    if (msg && data.message) msg.textContent = data.message;
+    const btn = document.getElementById('hitl-btn');
+    if (btn) { btn.disabled = false; btn.textContent = 'Yes, Write Report'; }
+  }
+  showToast('Human review requested');
 }
 
 function showPlainLLM(data) {
@@ -573,7 +617,10 @@ async function startResearch() {
   document.getElementById('download-btn').style.display = 'none';
   document.getElementById('live-label').textContent = 'LIVE';
   document.getElementById('live-dot').style.cssText = '';
+  const hitlBox = document.getElementById('hitl-box');
+  if (hitlBox) hitlBox.style.display = 'none';
   _currentReport = '';
+  _activeThreadId = null;
 
   try {
     const resp = await fetch(`${API_BASE}/research/stream`, {
