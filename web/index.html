@@ -36,6 +36,7 @@
     <ul class="nav-links">
       <li><a href="#pipeline-section">How it works</a></li>
       <li><a href="#dashboard">Live Demo</a></li>
+      <li><a href="#history-section" onclick="loadHistory()">History</a></li>
       <li><a href="https://github.com/HariChandran7177/multi-agent-research-assistant" target="_blank">GitHub</a></li>
     </ul>
     <div class="nav-badge">
@@ -196,7 +197,22 @@
     </div>
   </section>
 
-  <!-- TECH STACK -->
+  <!-- HISTORY SECTION -->
+  <section id="history-section">
+    <div class="tech-inner">
+      <div class="section-eyebrow">Research Archive</div>
+      <h2 class="section-title">Past Reports &amp;<br/><span class="gradient-text">Report History</span></h2>
+      <p class="section-subtitle">All completed research runs are automatically saved. Browse, re-read, or export any past report as a styled PDF.</p>
+      <div style="display:flex; justify-content:flex-end; margin-bottom:16px;">
+        <button class="toolbar-btn" onclick="loadHistory()" style="font-size:0.9em;">⟳ Refresh</button>
+      </div>
+      <div id="history-list" style="display:grid; gap:12px;">
+        <div style="text-align:center; color:#666; padding:40px;">Click <strong>History</strong> in the nav to load your past reports.</div>
+      </div>
+    </div>
+  </section>
+
+
   <section id="tech-section">
     <div class="tech-inner">
       <div class="section-eyebrow">Tech Stack</div>

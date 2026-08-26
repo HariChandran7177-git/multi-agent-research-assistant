@@ -839,3 +839,104 @@ async function runDemoMode(query) {
     }
   });
 })();
+
+// ─────────────────────────────────────────────────────────
+//  REPORT HISTORY
+// ─────────────────────────────────────────────────────────
+async function loadHistory() {
+  const listEl = document.getElementById('history-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="text-align:center;color:#666;padding:30px;">Loading history...</div>';
+
+  try {
+    const resp = await fetch(`${API_BASE}/reports?limit=30`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const reports = data.reports || [];
+
+    if (!reports.length) {
+      listEl.innerHTML = '<div style="text-align:center;color:#666;padding:40px;">No past reports yet. Run a research query to get started!</div>';
+      return;
+    }
+
+    listEl.innerHTML = reports.map(r => {
+      const date = new Date(r.created_at * 1000).toLocaleString();
+      const conf = ((r.confidence || 0) * 100).toFixed(0);
+      const tone = (r.tone || 'professional');
+      const iters = r.iterations || 0;
+      return `
+        <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1);
+                    border-radius:12px; padding:18px 20px; transition:border-color 0.2s;"
+             onmouseover="this.style.borderColor='rgba(99,211,162,0.4)'"
+             onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:600; font-size:0.95em; color:#e2e8f0; margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                ${escapeHtml(r.query)}
+              </div>
+              <div style="display:flex; gap:12px; font-size:0.78em; color:#94a3b8; flex-wrap:wrap;">
+                <span>📅 ${date}</span>
+                <span>🎯 ${conf}% confidence</span>
+                <span>🔁 ${iters} iteration${iters !== 1 ? 's' : ''}</span>
+                <span>🎨 ${tone}</span>
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; flex-shrink:0;">
+              <button onclick="viewHistoryReport(${r.id})"
+                style="padding:6px 14px; border-radius:6px; background:rgba(99,211,162,0.15);
+                       color:#63d3a2; border:1px solid rgba(99,211,162,0.3); cursor:pointer;
+                       font-size:0.8em; font-weight:600; transition:all 0.2s;"
+                onmouseover="this.style.background='rgba(99,211,162,0.25)'"
+                onmouseout="this.style.background='rgba(99,211,162,0.15)'">View</button>
+              <a href="${API_BASE}/reports/${r.id}/export.pdf" target="_blank"
+                style="padding:6px 14px; border-radius:6px; background:rgba(96,165,250,0.15);
+                       color:#60a5fa; border:1px solid rgba(96,165,250,0.3); cursor:pointer;
+                       font-size:0.8em; font-weight:600; transition:all 0.2s; text-decoration:none;"
+                onmouseover="this.style.background='rgba(96,165,250,0.25)'"
+                onmouseout="this.style.background='rgba(96,165,250,0.15)'">📄 PDF</a>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = `<div style="text-align:center;color:#f87171;padding:30px;">Failed to load history: ${e.message}</div>`;
+  }
+}
+
+async function viewHistoryReport(id) {
+  try {
+    const resp = await fetch(`${API_BASE}/reports/${id}`);
+    if (!resp.ok) throw new Error(`Report not found`);
+    const r = await resp.json();
+
+    // Scroll to dashboard and render the report there
+    document.getElementById('dashboard').scrollIntoView({ behavior: 'smooth' });
+    setTimeout(() => {
+      const reportBody = document.getElementById('report-body');
+      const placeholder = document.getElementById('report-placeholder');
+      const copyBtn = document.getElementById('copy-btn');
+      const dlBtn = document.getElementById('download-btn');
+      if (reportBody) {
+        reportBody.innerHTML = markdownToHtml(r.report || '');
+        window._currentReport = r.report;
+      }
+      if (placeholder) placeholder.style.display = 'none';
+      if (copyBtn) copyBtn.style.display = 'inline-flex';
+      if (dlBtn) dlBtn.style.display = 'inline-flex';
+      const meta = document.getElementById('report-meta');
+      if (meta) {
+        meta.innerHTML = `<span class="meta-badge">🎯 ${((r.confidence||0)*100).toFixed(0)}% confidence</span>
+          <span class="meta-badge">🔁 ${r.iterations||0} iteration${(r.iterations||0)!==1?'s':''}</span>
+          <span class="meta-badge">🎨 ${r.tone||'professional'}</span>
+          <span class="meta-badge" style="color:#60a5fa;">📂 From History</span>`;
+      }
+      showToast('✅ Report loaded from history');
+    }, 500);
+  } catch (e) {
+    showToast('❌ Failed to load report: ' + e.message);
+  }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
