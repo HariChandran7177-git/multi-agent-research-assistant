@@ -23,22 +23,76 @@ from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+# ── Environment Validation ────────────────────────────────────────────────────
+REQUIRED_ENV_VARS = [
+    "GROQ_API_KEY",
+    "TAVILY_API_KEY",
+    "GOOGLE_API_KEY",
+    "QDRANT_URL",
+    "QDRANT_API_KEY",
+]
+
+
+def validate_environment() -> list[str]:
+    """Check that all required environment variables are set.
+
+    Returns a list of missing variables (empty if all present).
+    """
+    missing = []
+    for var in REQUIRED_ENV_VARS:
+        if not os.environ.get(var):
+            missing.append(var)
+    return missing
+
+
+def check_environment():
+    """Validate environment at startup. Exit if any vars are missing."""
+    missing = validate_environment()
+    if missing:
+        print("=" * 60)
+        print("CRITICAL: Missing required environment variables")
+        print("=" * 60)
+        print("The following environment variables are not set:")
+        for var in missing:
+            print(f"  - {var}")
+        print()
+        print("Please set them and restart the server.")
+        print("=" * 60)
+        sys.exit(1)
+
+
+# ── Rate Limiting Setup (slowapi) ─────────────────────────────────────────────
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["5 per minute"])
+
 # ── Add root to path so we can import core / agents ──────────────────────────
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import re
 from core.logger import get_logger
 from core.graph import build_graph
-from core.cache import cache_manager
+from core.cache import cache as cache_manager
 from core.metrics import metrics
 from core.health import health_checker
 
 logger = get_logger(__name__)
 RESUME_EVENTS = {}
 
+# Report history
+from core.report_history import save_report, list_reports, get_report, delete_report
+
+
 # Global graph - initialized asynchronously at startup
 _compiled_graph = None
 _graph_init_lock = asyncio.Lock()
+
+# Concurrency guard — max 5 simultaneous research requests
+# Prevents SQLite checkpoint conflicts and resource exhaustion
+_research_semaphore = asyncio.Semaphore(5)
 
 
 async def get_graph():
@@ -65,6 +119,13 @@ app = FastAPI(
     version="2.0.0",
     description="6-agent LangGraph pipeline with real-time SSE streaming",
 )
+
+# Validate environment at startup
+check_environment()
+
+# Register rate limiting exception handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 app.add_middleware(
@@ -164,7 +225,17 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
         yield sse_event("complete", cached_result)
         return
 
-    try:
+    # Acquire semaphore — rejects if already 5 active requests
+    if not _research_semaphore._value:  # check without blocking
+        yield sse_event("error", {
+            "message": "Server is busy. Too many concurrent research requests. Please try again in a moment.",
+            "code": "CONCURRENCY_LIMIT",
+            "timestamp": time.time(),
+        })
+        return
+
+    async with _research_semaphore:
+     try:
         # Import pipeline components
         from core.state import ResearchState
         from agents.router import router_node
@@ -407,22 +478,34 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
         }
         cache_manager.set(cache_key, complete_payload)
         logger.info(f"Cache miss for query: {query}. Stored in cache.")
+        # Persist to report history
+        save_report(
+            query=query,
+            report=state.get("final_report", ""),
+            confidence=round(state.get("confidence_score", 0.0), 3),
+            iterations=state.get("iteration_count", 0),
+            tone=state.get("tone", "professional"),
+            user_id=user_id,
+        )
         yield sse_event("complete", complete_payload)
 
-    except Exception as e:
+     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"[API ERROR] {e}\n{tb}")
         yield sse_event("error", {
             "message": str(e),
+            "code": type(e).__name__,
             "detail": tb[:500],
             "timestamp": time.time(),
+            "recoverable": isinstance(e, (asyncio.TimeoutError, ConnectionError)),
         })
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.post("/research/stream")
-async def research_stream(request: ResearchRequest):
+@limiter.limit("5 per minute")
+async def research_stream(request: ResearchRequest, req: Request):
     """SSE endpoint — streams agent events as they happen."""
     return StreamingResponse(
         stream_pipeline(request.query, request.user_id),
@@ -436,7 +519,8 @@ async def research_stream(request: ResearchRequest):
 
 
 @app.post("/research")
-async def research_sync(request: ResearchRequest):
+@limiter.limit("5 per minute")
+async def research_sync(request: ResearchRequest, req: Request):
     """Synchronous fallback — waits for full pipeline then returns."""
     cache_key = get_cache_key(request.query)
     cached = cache_manager.get(cache_key)
@@ -506,6 +590,33 @@ async def resume_stream(request: ResumeRequest):
         RESUME_EVENTS[request.thread_id].set()
         return {"status": "resumed"}
     return {"error": "thread_id not found or expired"}
+
+
+# ── Report History Routes ───────────────────────────────────────────────────────
+@app.get("/reports")
+async def get_reports(user_id: str = None, limit: int = 20):
+    """List recent research reports (newest first)."""
+    return {"reports": list_reports(user_id=user_id, limit=min(limit, 100))}
+
+
+@app.get("/reports/{report_id}")
+async def get_report_by_id(report_id: int):
+    """Fetch a single report by its ID."""
+    report = get_report(report_id)
+    if not report:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+    return report
+
+
+@app.delete("/reports/{report_id}")
+async def delete_report_by_id(report_id: int):
+    """Delete a report by ID."""
+    success = delete_report(report_id)
+    if not success:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+    return {"status": "deleted", "id": report_id}
 
 
 # Mount static files at root / so style.css and app.js resolve correctly
