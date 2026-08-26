@@ -1,11 +1,17 @@
 import os
+import asyncio
 import uuid
+from typing import List
+from functools import partial
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 from tenacity import retry, stop_after_attempt, wait_exponential
+from core.state import ResearchState
 from core.logger import get_logger
+from core.metrics import metrics
+from core.config import MAX_ITERATIONS, AGENT_TIMEOUT
 
 load_dotenv()
 
@@ -16,6 +22,7 @@ embeddings = GoogleGenerativeAIEmbeddings(
     google_api_key=os.getenv("GOOGLE_API_KEY")
 )
 
+
 def get_qdrant_client():
     """Initialize Qdrant client."""
     try:
@@ -25,33 +32,65 @@ def get_qdrant_client():
         logger.info("Connected to remote Qdrant instance.")
         return client
     except Exception as e:
-        logger.error(f"CRITICAL: Qdrant connection failed, cannot proceed with retrieval: {e}")
+        logger.error(f"CRITICAL: Qdrant connection failed: {e}")
         raise RuntimeError(
-            f"Qdrant is unreachable. Refusing to silently fall back to in-memory storage, "
-            f"which would produce empty/incorrect retrieval results. Original error: {e}"
+            f"Qdrant is unreachable. Original error: {e}"
         )
 
-qdrant = get_qdrant_client()
+
+qdrant = None
+_qdrant_initialized = False
+
+
+def _initialize_qdrant():
+    """Lazily initialize Qdrant client if not already initialized."""
+    global qdrant, _qdrant_initialized
+    if _qdrant_initialized:
+        return qdrant
+    try:
+        qdrant = get_qdrant_client()
+        _qdrant_initialized = True
+        return qdrant
+    except RuntimeError:
+        _qdrant_initialized = True
+        return None
+
+
 COLLECTION_NAME = "research_docs"
 
 
 def ensure_collection():
-    collections = qdrant.get_collections().collections
-    if COLLECTION_NAME not in [c.name for c in collections]:
-        logger.info(f"Collection '{COLLECTION_NAME}' not found — creating it")
-        qdrant.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(size=3072, distance=Distance.COSINE)
-        )
-        # Payload index is only needed for remote Qdrant; ignore errors for in‑memory client
-        try:
-            qdrant.create_payload_index(
+    """Ensure collection exists - returns False if Qdrant is unavailable."""
+    global qdrant
+    if qdrant is None:
+        return False
+    try:
+        collections = qdrant.get_collections().collections
+        if COLLECTION_NAME not in [c.name for c in collections]:
+            logger.info(f"Collection '{COLLECTION_NAME}' not found — creating it")
+            qdrant.create_collection(
                 collection_name=COLLECTION_NAME,
-                field_name="session_id",
-                field_schema="keyword",
+                vectors_config=VectorParams(size=3072, distance=Distance.COSINE)
             )
-        except Exception as e:
-            logger.debug(f"Payload index creation skipped or failed ({e}); may be in‑memory client.")
+            # Payload index is only needed for remote Qdrant; ignore errors for in-memory client
+            try:
+                qdrant.create_payload_index(
+                    collection_name=COLLECTION_NAME,
+                    field_name="session_id",
+                    field_schema="keyword",
+                )
+                qdrant.create_payload_index(
+                    collection_name=COLLECTION_NAME,
+                    field_name="user_id",
+                    field_schema="keyword",
+                )
+            except Exception as e:
+                logger.debug(f"Payload index creation skipped or failed ({e}); may be in-memory client.")
+        return True
+    except Exception as e:
+        logger.warning(f"ensure_collection failed: {e}")
+        qdrant = None
+        return False
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=4, max=30))
@@ -59,75 +98,133 @@ def upsert_with_retry(qdrant, collection_name, points):
     return qdrant.upsert(collection_name=collection_name, points=points)
 
 
-def retriever_node(state):
-    try:
-        ensure_collection()
-    except RuntimeError as e:
-        logger.error(f"Retriever failed: {e}")
-        state["retrieved_docs"] = state.get("research_results", [])[:5]  # fallback to raw research
-        state["retrieval_degraded"] = True  # flag so Critic/Reporter know quality may be lower
-        return state
+def _fallback_retrieval(state: ResearchState, texts: List[str], error_msg: str = "") -> ResearchState:
+    """Return empty results when Qdrant is unavailable."""
+    if error_msg:
+        logger.warning(f"Qdrant unavailable, using fallback: {error_msg}")
+    else:
+        logger.warning("Qdrant unavailable, using fallback (no error details)")
+
+    state["retrieved_docs"] = []
+    state["qdrant_scores"] = []
+    state["retrieval_available"] = False
+    return state
+
+
+async def retriever_node(state: ResearchState) -> ResearchState:
+    """Async retriever node with timeout and metrics."""
+    loop = asyncio.get_event_loop()
+
+    # Initialize Qdrant
+    global qdrant
+    qdrant = _initialize_qdrant()
+
+    # If Qdrant is unavailable, use fallback
+    if qdrant is None:
+        return _fallback_retrieval(state, state.get("research_results", []), "Qdrant client not available")
 
     session_id = str(uuid.uuid4())  # unique tag for THIS run only
+    user_id = state.get("user_id", "default_user")
+    texts = state.get("research_results", [])
 
-    from core.config import MAX_ITERATIONS
-
-    texts = state["research_results"]
-    logger.info(f"Embedding {len(texts)} research results")
+    # Ensure collection exists
     try:
-        vectors = embeddings.embed_documents(texts)
+        if not ensure_collection():
+            return _fallback_retrieval(state, texts, "Failed to ensure collection")
+    except Exception as e:
+        logger.warning(f"ensure_collection raised exception: {e}")
+        return _fallback_retrieval(state, texts, f"ensure_collection error: {e}")
+
+    logger.info(f"Embedding {len(texts)} research results")
+
+    try:
+        # Embedding with timeout protection
+        vectors = await asyncio.wait_for(
+            loop.run_in_executor(None, embeddings.embed_documents, texts),
+            timeout=AGENT_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        logger.error(f"Embedding timed out after {AGENT_TIMEOUT}s")
+        return _fallback_retrieval(state, texts, "embedding_timeout")
     except Exception as e:
         logger.error(f"Error embedding content ({type(e).__name__}): {e}")
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            logger.warning("Gemini rate limit hit during embedding. Degrading retrieval and preventing further loops.")
-            state["retrieved_docs"] = texts[:5]
-            state["retrieval_degraded"] = True
-            state["iteration_count"] = MAX_ITERATIONS  # Prevent looping
-            return state
-        raise
+            logger.warning("Gemini rate limit hit during embedding. Using fallback.")
+            return _fallback_retrieval(state, texts, "rate_limit")
+        return _fallback_retrieval(state, texts, f"embedding error: {e}")
 
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
             vector=vectors[i],
-            payload={"text": texts[i], "session_id": session_id}
+            payload={"text": texts[i], "session_id": session_id, "user_id": user_id}
         )
         for i in range(len(texts))
     ]
 
+    # Upsert to Qdrant
     try:
-        upsert_with_retry(qdrant, COLLECTION_NAME, points)
+        await asyncio.wait_for(
+            loop.run_in_executor(None, upsert_with_retry, qdrant, COLLECTION_NAME, points),
+            timeout=AGENT_TIMEOUT
+        )
         logger.info(f"Upserted {len(points)} points into Qdrant")
+    except asyncio.TimeoutError:
+        logger.error(f"Qdrant upsert timed out after {AGENT_TIMEOUT}s")
+        return _fallback_retrieval(state, texts, "upsert_timeout")
     except Exception as e:
-        logger.error(f"Qdrant upsert failed after retries: {e}")
-        state["retrieved_docs"] = texts[:5]
-        return state
+        logger.warning(f"Qdrant upsert failed after retries: {e}")
+        return _fallback_retrieval(state, texts, f"upsert error: {e}")
 
+    # Embed query
     try:
-        query_vector = embeddings.embed_query(state["query"])
+        query_vector = await asyncio.wait_for(
+            loop.run_in_executor(None, embeddings.embed_query, state["query"]),
+            timeout=AGENT_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        logger.error(f"Query embedding timed out after {AGENT_TIMEOUT}s")
+        return _fallback_retrieval(state, texts, "query_embedding_timeout")
     except Exception as e:
         logger.error(f"Error embedding query ({type(e).__name__}): {e}")
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            logger.warning("Gemini rate limit hit during query embedding. Degrading retrieval and preventing further loops.")
-            state["retrieved_docs"] = texts[:5]
-            state["retrieval_degraded"] = True
-            state["iteration_count"] = MAX_ITERATIONS
-            return state
-        raise
+            logger.warning("Gemini rate limit hit during query embedding. Using fallback.")
+            return _fallback_retrieval(state, texts, "rate_limit")
+        return _fallback_retrieval(state, texts, f"query embedding error: {e}")
 
-    results = qdrant.query_points(
-        collection_name=COLLECTION_NAME,
-        query=query_vector,
-        limit=5,
-        query_filter=Filter(
-            must=[FieldCondition(
-                key="session_id", match=MatchValue(value=session_id))]
-        ),
-    )
+    # Query Qdrant for relevant documents
+    try:
+        query_filter = Filter(
+            must=[
+                FieldCondition(key="session_id", match=MatchValue(value=session_id)),
+                FieldCondition(key="user_id", match=MatchValue(value=user_id))
+            ]
+        )
+        query_fn = partial(qdrant.query_points,
+            collection_name=COLLECTION_NAME,
+            query=query_vector,
+            limit=5,
+            query_filter=query_filter,
+        )
+        results = await asyncio.wait_for(
+            loop.run_in_executor(None, query_fn),
+            timeout=AGENT_TIMEOUT
+        )
 
-    logger.info(f"Retrieved {len(results.points)} relevant documents")
-    state["retrieved_docs"]  = [point.payload["text"] for point in results.points]
-    state["qdrant_scores"]   = [point.score          for point in results.points]
+        logger.info(f"Retrieved {len(results.points)} relevant documents")
+        state["retrieved_docs"] = [point.payload["text"] for point in results.points]
+        state["qdrant_scores"] = [point.score for point in results.points]
+        state["retrieval_available"] = True
+
+        # Record metrics
+        metrics.end_agent("retriever", input_tokens=len(state["query"]), output_tokens=len(state["retrieved_docs"]))
+    except asyncio.TimeoutError:
+        logger.error(f"Query points timed out after {AGENT_TIMEOUT}s")
+        return _fallback_retrieval(state, texts, "query_timeout")
+    except Exception as e:
+        logger.warning(f"Qdrant query failed: {e}")
+        return _fallback_retrieval(state, texts, f"query error: {e}")
+
     return state
 
 

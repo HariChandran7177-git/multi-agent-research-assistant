@@ -1,14 +1,17 @@
 import os
+import asyncio
 import concurrent.futures
 from dotenv import load_dotenv
 from tavily import TavilyClient
 from langchain_groq import ChatGroq
-from tenacity import retry, stop_after_attempt, wait_exponential
+from core.state import ResearchState
 from core.logger import get_logger
+from core.metrics import metrics
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, TAVILY_MAX_RESULTS
+from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, TAVILY_MAX_RESULTS, AGENT_TIMEOUT
 
 logger = get_logger(__name__)
 
@@ -23,45 +26,70 @@ def search_with_retry(client, task):
     return client.search(query=clean_task, max_results=TAVILY_MAX_RESULTS, search_depth="advanced", include_raw_content=False)
 
 
-def _process_task(task):
-    """Helper function to run a single task and return formatted results."""
+async def _process_task(task: str, executor: concurrent.futures.Executor) -> list:
+    """Async wrapper for _process_task to enable timeout protection."""
+    loop = asyncio.get_event_loop()
     local_results = []
+
+    def _do_search():
+        try:
+            search_response = search_with_retry(tavily, task)
+            for result in search_response.get("results", []):
+                title = result.get("title", "Untitled Source")
+                url = result.get("url", "")
+                content = result.get("content", "")
+                formatted_item = f"Source: [{title}]({url})\nURL: {url}\nContent: {content}"
+                local_results.append(formatted_item)
+            logger.info(f"Completed search for: {task}")
+            return local_results
+        except Exception as e:
+            logger.warning(f"Failed on task '{task}' after retries: {e}")
+            return []
+
     try:
-        search_response = search_with_retry(tavily, task)
-        for result in search_response.get("results", []):
-            title = result.get("title", "Untitled Source")
-            url = result.get("url", "")
-            content = result.get("content", "")
-            formatted_item = f"Source: [{title}]({url})\nURL: {url}\nContent: {content}"
-            local_results.append(formatted_item)
-        logger.info(f"Completed search for: {task}")
-    except Exception as e:
-        logger.warning(f"Failed on task '{task}' after retries: {e}")
-    return local_results
+        # Run with timeout protection
+        result = await asyncio.wait_for(
+            loop.run_in_executor(executor, _do_search),
+            timeout=AGENT_TIMEOUT
+        )
+        return result or []
+    except asyncio.TimeoutError:
+        logger.error(f"Task '{task}' timed out after {AGENT_TIMEOUT}s — skipping")
+        return []
 
 
-def researcher_node(state):
+async def researcher_node(state: ResearchState) -> ResearchState:
+    """Async researcher node with timeout and metrics."""
+    loop = asyncio.get_event_loop()
     plan = state["plan"]
     all_results = []
+    start_time = metrics.current_metrics.get("researcher", None)
 
     logger.info(f"Starting parallel research for {len(plan)} sub-tasks")
 
-    # Use as_completed so each thread has its own try/except — one failure won't
-    # silently kill the batch or return None (executor.map() would do that)
+    # Use as_completed so each thread has its own try/except
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_task = {executor.submit(_process_task, task): task for task in plan}
-        for future in concurrent.futures.as_completed(future_to_task):
-            task = future_to_task[future]
-            try:
-                result = future.result(timeout=30)
+        # Create async tasks with timeout protection
+        async_tasks = [
+            _process_task(task, executor) for task in plan
+        ]
+        # Run all tasks concurrently and gather results
+        results = await asyncio.gather(*async_tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"Task failed with exception: {result}")
+            elif result:
                 all_results.extend(result)
-            except concurrent.futures.TimeoutError:
-                logger.error(f"Task '{task}' timed out after 30s — skipping")
-            except Exception as e:
-                logger.error(f"Task '{task}' failed: {e} — skipping")
 
     logger.info(f"Research complete — {len(all_results)} total results gathered")
     state["research_results"] = all_results
+
+    # Record metrics
+    input_tokens = sum(len(p) for p in plan)
+    output_tokens = sum(len(r) for r in all_results)
+    metrics.end_agent("researcher", input_tokens=input_tokens, output_tokens=output_tokens)
+
     return state
 
 

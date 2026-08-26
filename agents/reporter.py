@@ -1,13 +1,14 @@
+import asyncio
 from langchain_groq import ChatGroq
 from core.state import ResearchState
 import os
 from dotenv import load_dotenv
-from tenacity import retry, stop_after_attempt, wait_exponential
+from core.metrics import metrics
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from core.logger import get_logger
+from core.config import GROQ_MODEL, GROQ_REPORTER_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
 
 load_dotenv()
-
-from core.config import GROQ_MODEL, GROQ_REPORTER_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX
 
 logger = get_logger(__name__)
 
@@ -60,10 +61,9 @@ Write the full report now in the tone: **{tone}**
 """
 
 
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-
 def _is_rate_limit(exc):
     return "rate" in str(exc).lower() or "429" in str(exc)
+
 
 @retry(
     stop=stop_after_attempt(RETRY_ATTEMPTS),
@@ -75,7 +75,9 @@ def invoke_with_retry(llm, prompt):
     return llm.invoke(prompt)
 
 
-def reporter_node(state: ResearchState) -> ResearchState:
+async def reporter_node(state: ResearchState) -> ResearchState:
+    """Async reporter node with timeout and metrics."""
+    loop = asyncio.get_event_loop()
     logger.info("Writing final report")
 
     plan_text = "\n".join(state.get("plan", []))
@@ -93,28 +95,53 @@ def reporter_node(state: ResearchState) -> ResearchState:
     )
 
     try:
-        response = invoke_with_retry(llm, prompt)
+        # Timeout protection
+        response = await asyncio.wait_for(
+            loop.run_in_executor(None, invoke_with_retry, llm, prompt),
+            timeout=AGENT_TIMEOUT
+        )
         state["final_report"] = response.content.strip()
         logger.info("Report generated successfully")
-    except Exception as e:
-        logger.error(f"LLM call failed after retries: {e}")
-        # Return a meaningful markdown fallback so the frontend still renders
+
+        # Record metrics
+        input_tokens = len(prompt)
+        output_tokens = len(response.content)
+        metrics.end_agent("reporter", input_tokens=input_tokens, output_tokens=output_tokens)
+
+    except asyncio.TimeoutError:
+        logger.error(f"Reporter timeout after {AGENT_TIMEOUT}s")
         state["final_report"] = f"""# Research Results for: {state['query']}
 
-> ⚠️ The report writer hit a rate limit. Here are the raw research findings:
+> ⚠️ The report writer timed out after {AGENT_TIMEOUT} seconds.
 
 ## Research Plan
-{plan_text}
+{plan_text[:1000]}
 
 ## Key Findings
-{research_text[:2000]}
+{research_text[:1500]}
 
 ---
-*Report generation failed due to API rate limits. Try again in a minute.*
+*Report generation timed out. Please try again.*
 """
+        metrics.end_agent("reporter", error="timeout")
+    except Exception as e:
+        logger.error(f"LLM call failed after retries: {e}")
+        state["final_report"] = f"""# Research Results for: {state['query']}
+
+> ⚠️ The report writer encountered an error: {str(e)[:100]}
+
+## Research Plan
+{plan_text[:1000]}
+
+## Key Findings
+{research_text[:1500]}
+
+---
+*Report generation failed. Please check your API keys and try again.*
+"""
+        metrics.end_agent("reporter", error=str(e))
 
     return state
-
 
 
 if __name__ == "__main__":

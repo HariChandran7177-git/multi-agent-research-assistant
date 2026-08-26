@@ -1,15 +1,16 @@
 import json
+import asyncio
 from langchain_groq import ChatGroq
 from core.state import ResearchState
 import os
 from dotenv import load_dotenv
+from core.metrics import metrics
 from tenacity import retry, stop_after_attempt, wait_exponential
 from core.logger import get_logger
 from core.scorer import calculate_objective_score, calculate_hybrid_score
+from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
 
 load_dotenv()
-
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX
 
 logger = get_logger(__name__)
 
@@ -48,7 +49,9 @@ def invoke_with_retry(llm, prompt):
     return llm.invoke(prompt)
 
 
-def critic_node(state: ResearchState) -> ResearchState:
+async def critic_node(state: ResearchState) -> ResearchState:
+    """Async critic node with timeout and metrics."""
+    loop = asyncio.get_event_loop()
     logger.info("Evaluating research quality")
 
     research_text = "\n".join(state.get("research_results", []))[:8000]
@@ -61,13 +64,25 @@ def critic_node(state: ResearchState) -> ResearchState:
     )
 
     try:
-        response = invoke_with_retry(llm, prompt)
+        # Timeout protection
+        response = await asyncio.wait_for(
+            loop.run_in_executor(None, invoke_with_retry, llm, prompt),
+            timeout=AGENT_TIMEOUT
+        )
         content = response.content.strip()
+    except asyncio.TimeoutError:
+        logger.error(f"Critic timeout after {AGENT_TIMEOUT}s")
+        state["confidence_score"] = 0.0
+        state["critique"] = f"Critic timed out after {AGENT_TIMEOUT}s"
+        state["iteration_count"] = state.get("iteration_count", 0) + 1
+        metrics.end_agent("critic", error="timeout")
+        return state
     except Exception as e:
         logger.error(f"LLM call failed after retries: {e}")
         state["confidence_score"] = 0.0
         state["critique"] = f"Critic failed to run: {e}"
         state["iteration_count"] = state.get("iteration_count", 0) + 1
+        metrics.end_agent("critic", error=str(e))
         return state
 
     # Strip accidental markdown fences if the model adds them
@@ -90,7 +105,7 @@ def critic_node(state: ResearchState) -> ResearchState:
     qdrant_scores = state.get("qdrant_scores", [])
     objective_breakdown = calculate_objective_score(state, qdrant_scores=qdrant_scores)
 
-    # --- Hybrid: blend LLM judgment (60%) with objective signals (40%) ---
+    # --- Hybrid: blend LLM judgment with objective signals ---
     hybrid_score = calculate_hybrid_score(llm_score, objective_breakdown)
 
     logger.info(
@@ -103,6 +118,9 @@ def critic_node(state: ResearchState) -> ResearchState:
     state["score_breakdown"]  = {"llm_score": round(llm_score, 3), **objective_breakdown}
     state["critique"]         = critique
     state["iteration_count"]  = state.get("iteration_count", 0) + 1
+
+    # Record metrics
+    metrics.end_agent("critic", input_tokens=len(research_text) + len(docs_text), output_tokens=len(content))
 
     return state
 

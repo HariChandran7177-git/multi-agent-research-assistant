@@ -10,6 +10,7 @@ import os
 import time
 import traceback
 import mimetypes
+import uuid
 from typing import AsyncGenerator
 
 # Force correct MIME types for Windows registry issues
@@ -28,22 +29,43 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import re
 from core.logger import get_logger
 from core.graph import build_graph
+from core.cache import cache_manager
+from core.metrics import metrics
+from core.health import health_checker
 
 logger = get_logger(__name__)
-QUERY_CACHE = {}
 RESUME_EVENTS = {}
 
+# Global graph - initialized asynchronously at startup
+_compiled_graph = None
+_graph_init_lock = asyncio.Lock()
+
+
+async def get_graph():
+    """Get or initialize the compiled graph (singleton pattern)."""
+    global _compiled_graph
+
+    if _compiled_graph is None:
+        async with _graph_init_lock:
+            if _compiled_graph is None:
+                logger.info("Initializing LangGraph pipeline at startup...")
+                _compiled_graph = await build_graph()
+                logger.info("LangGraph pipeline initialized successfully")
+
+    return _compiled_graph
+
+
 def get_cache_key(query: str) -> str:
+    """Generate cache key from query."""
     return re.sub(r'\s+', ' ', query.strip().lower())
 
-# Compile graph once at startup
-compiled_graph = build_graph()
 
 app = FastAPI(
     title="Multi-Agent Research Assistant",
     version="2.0.0",
     description="6-agent LangGraph pipeline with real-time SSE streaming",
 )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,6 +75,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ── Mount static files (frontend) ─────────────────────────────────────────────
 FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web"))
 
@@ -60,27 +83,50 @@ FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "we
 # ── Request / Response models ─────────────────────────────────────────────────
 class ResearchRequest(BaseModel):
     query: str
+    user_id: str = "default_user"
+
 
 class DoubtRequest(BaseModel):
     report: str
     question: str
 
+
 class ResumeRequest(BaseModel):
     thread_id: str
+
 
 # ── SSE event helper ──────────────────────────────────────────────────────────
 def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+# ── Health check route ────────────────────────────────────────────────────���───
+@app.get("/health")
+async def health():
+    """Basic health check with all service dependencies."""
+    services = await health_checker.check_all()
+    overall = "healthy" if services["status"] == "healthy" else "degraded"
+    return {
+        "status": overall,
+        "version": "2.0.0",
+        "timestamp": time.time(),
+        "services": services["services"],
+    }
+
+
+@app.get("/health/metrics")
+async def metrics_endpoint():
+    """Get current metrics summary."""
+    return metrics.get_summary()
+
+
 # ── Core pipeline streaming ───────────────────────────────────────────────────
-async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
+async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGenerator[str, None]:
     """
     Run the real LangGraph pipeline, emitting SSE events at each stage.
-    Falls back to mock mode if API keys are not configured.
+    Uses async agent nodes for better performance.
     """
     cache_key = get_cache_key(query)
-    import uuid
     thread_id = str(uuid.uuid4())
     RESUME_EVENTS[thread_id] = asyncio.Event()
 
@@ -90,20 +136,22 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
     # ── Stage 0: start ────────────────────────────────────────────────────────
     yield sse_event("start", {"query": query, "timestamp": time.time()})
     await asyncio.sleep(0.1)
-    
-    if cache_key in QUERY_CACHE:
+
+    # Check Redis cache
+    cached_result = cache_manager.get(cache_key)
+    if cached_result:
         logger.info(f"Cache hit for query: {query}")
-        
-        # Fast-forward simulation so the frontend animations don't break
+
+        # Fast-forward simulation
         agents = [
             ("router", "🔀", "Router", "Cache hit: Bypassing execution"),
             ("planner", "📋", "Planner", "Cache hit: Bypassing execution"),
             ("researcher", "⚡", "Researcher", "Cache hit: Bypassing execution"),
             ("retriever", "🧠", "Retriever", "Cache hit: Bypassing execution"),
             ("critic", "🧐", "Critic", "Cache hit: Bypassing execution"),
-            ("reporter", "📝", "Reporter", "Cache hit: Bypassing execution")
+            ("reporter", "📝", "Reporter", "Cache hit: Bypassing execution"),
         ]
-        
+
         for agent_id, icon, label, msg in agents:
             yield sse_event("agent_start", {
                 "agent": agent_id, "icon": icon, "label": label, "message": msg, "timestamp": time.time()
@@ -112,31 +160,24 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
             yield sse_event("agent_done", {
                 "agent": agent_id, "label": label, "result": {"cached": True}, "timestamp": time.time()
             })
-            
-        yield sse_event("complete", QUERY_CACHE[cache_key])
+
+        yield sse_event("complete", cached_result)
         return
 
     try:
-        # Import pipeline
-        from core.graph import build_graph
+        # Import pipeline components
         from core.state import ResearchState
-
-        # ── Stage 1: Router ───────────────────────────────────────────────────
-        yield sse_event("agent_start", {
-            "agent": "router",
-            "label": "Router",
-            "icon": "🔀",
-            "message": "Analyzing query intent & detecting tone...",
-            "timestamp": time.time(),
-        })
-
-        loop = asyncio.get_event_loop()
-        
-        # We use the globally compiled graph
-        graph = compiled_graph
+        from agents.router import router_node
+        from agents.planner import planner_node
+        from agents.researcher import researcher_node
+        from agents.retriever import retriever_node
+        from agents.critic import critic_node
+        from agents.reporter import reporter_node
+        from core.config import CONFIDENCE_THRESHOLD, MAX_ITERATIONS, AGENT_TIMEOUT
 
         initial_state: ResearchState = {
             "query": query,
+            "user_id": user_id,
             "plan": [],
             "research_results": [],
             "retrieved_docs": [],
@@ -145,6 +186,9 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
             "iteration_count": 0,
             "final_report": "",
         }
+
+        # Get the compiled graph
+        compiled_graph = await get_graph()
 
         # Start Plain LLM task concurrently
         from langchain_groq import ChatGroq
@@ -155,28 +199,28 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
         )
         plain_llm_sent = False
 
-        # We'll run each node manually to emit progress events
-        from agents.router import router_node
-        from agents.planner import planner_node
-        from agents.researcher import researcher_node
-        from agents.retriever import retriever_node
-        from agents.critic import critic_node
-        from agents.reporter import reporter_node
-        from core.config import CONFIDENCE_THRESHOLD, MAX_ITERATIONS
-
         state = initial_state.copy()
 
-        # Router
-        state = await loop.run_in_executor(None, router_node, state)
-        yield sse_event("agent_done", {
-            "agent": "router",
-            "label": "Router",
-            "result": {
-                "is_casual": state.get("is_casual", False),
-                "tone": state.get("tone", "professional"),
-            },
-            "timestamp": time.time(),
+        # ── Agent 1: Router ────────────────────────────────────────────────────
+        yield sse_event("agent_start", {
+            "agent": "router", "label": "Router", "icon": "🔀",
+            "message": "Analyzing query intent & detecting tone...", "timestamp": time.time(),
         })
+        metrics.start_agent("router")
+        try:
+            state = await asyncio.wait_for(
+                router_node(state),
+                timeout=AGENT_TIMEOUT
+            )
+            yield sse_event("agent_done", {
+                "agent": "router", "label": "Router",
+                "result": {"is_casual": state.get("is_casual", False), "tone": state.get("tone", "professional")},
+                "timestamp": time.time(),
+            })
+        except asyncio.TimeoutError:
+            logger.warning("Router timed out")
+            state["is_casual"] = False
+            yield sse_event("agent_done", {"agent": "router", "label": "Router", "error": "timeout"})
 
         if state.get("is_casual"):
             if not plain_llm_sent:
@@ -186,150 +230,171 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
                 except Exception as e:
                     logger.error(f"Plain LLM failed: {e}")
                     yield sse_event("plain_llm_done", {"response": "Failed to generate plain LLM response.", "timestamp": time.time()})
-            
+
             complete_payload = {
                 "report": state.get("final_report", ""),
-                "confidence": 1.0,
-                "iterations": 0,
+                "confidence": 1.0, "iterations": 0,
                 "tone": state.get("tone", "casual"),
-                "is_casual": True,
-                "timestamp": time.time(),
+                "is_casual": True, "timestamp": time.time(),
             }
-            QUERY_CACHE[cache_key] = complete_payload
+            cache_manager.set(cache_key, complete_payload)
             logger.info(f"Cache miss for query: {query}. Stored in cache.")
             yield sse_event("complete", complete_payload)
             return
 
         await asyncio.sleep(0.2)
 
-        # Planner
+        # ── Agent 2: Planner ───────────────────────────────────────────────────
         yield sse_event("agent_start", {
-            "agent": "planner",
-            "label": "Planner",
-            "icon": "📋",
-            "message": "Breaking query into research sub-tasks...",
-            "timestamp": time.time(),
+            "agent": "planner", "label": "Planner", "icon": "📋",
+            "message": "Breaking query into research sub-tasks...", "timestamp": time.time(),
         })
-        state = await loop.run_in_executor(None, planner_node, state)
-        yield sse_event("agent_done", {
-            "agent": "planner",
-            "label": "Planner",
-            "result": {"plan": state.get("plan", [])},
-            "timestamp": time.time(),
-        })
+        metrics.start_agent("planner")
+        try:
+            state = await asyncio.wait_for(
+                planner_node(state),
+                timeout=AGENT_TIMEOUT
+            )
+            yield sse_event("agent_done", {
+                "agent": "planner", "label": "Planner",
+                "result": {"plan": state.get("plan", [])}, "timestamp": time.time(),
+            })
+        except asyncio.TimeoutError:
+            logger.warning("Planner timed out")
+            yield sse_event("agent_done", {"agent": "planner", "label": "Planner", "error": "timeout"})
+
         await asyncio.sleep(0.2)
 
-        # Research loop
+        # ── Research loop ──────────────────────────────────────────────────────
         iteration = 0
         while iteration < MAX_ITERATIONS:
             iteration += 1
 
-            # Researcher
+            # Agent 3: Researcher
             yield sse_event("agent_start", {
-                "agent": "researcher",
-                "label": "Researcher",
-                "icon": "⚡",
+                "agent": "researcher", "label": "Researcher", "icon": "⚡",
                 "message": f"Parallel web search — pass {iteration}...",
-                "iteration": iteration,
-                "timestamp": time.time(),
+                "iteration": iteration, "timestamp": time.time(),
             })
-            state = await loop.run_in_executor(None, researcher_node, state)
-            yield sse_event("agent_done", {
-                "agent": "researcher",
-                "label": "Researcher",
-                "result": {"sources_found": len(state.get("research_results", []))},
-                "iteration": iteration,
-                "timestamp": time.time(),
-            })
+            metrics.start_agent("researcher")
+            try:
+                state = await asyncio.wait_for(
+                    researcher_node(state),
+                    timeout=AGENT_TIMEOUT * 2  # Web search takes longer
+                )
+                yield sse_event("agent_done", {
+                    "agent": "researcher", "label": "Researcher",
+                    "result": {"sources_found": len(state.get("research_results", [])), "iteration": iteration},
+                    "timestamp": time.time(),
+                })
+            except asyncio.TimeoutError:
+                logger.warning(f"Researcher timed out on iteration {iteration}")
+                yield sse_event("agent_done", {"agent": "researcher", "label": "Researcher", "error": "timeout"})
+
             await asyncio.sleep(0.2)
 
-            # Retriever
+            # Agent 4: Retriever
             yield sse_event("agent_start", {
-                "agent": "retriever",
-                "label": "Retriever",
-                "icon": "🧠",
+                "agent": "retriever", "label": "Retriever", "icon": "🧠",
                 "message": "Embedding & semantic retrieval from Qdrant...",
-                "iteration": iteration,
-                "timestamp": time.time(),
+                "iteration": iteration, "timestamp": time.time(),
             })
-            state = await loop.run_in_executor(None, retriever_node, state)
-            yield sse_event("agent_done", {
-                "agent": "retriever",
-                "label": "Retriever",
-                "result": {"docs_retrieved": len(state.get("retrieved_docs", []))},
-                "iteration": iteration,
-                "timestamp": time.time(),
-            })
+            metrics.start_agent("retriever")
+            try:
+                state = await asyncio.wait_for(
+                    retriever_node(state),
+                    timeout=AGENT_TIMEOUT
+                )
+                yield sse_event("agent_done", {
+                    "agent": "retriever", "label": "Retriever",
+                    "result": {"docs_retrieved": len(state.get("retrieved_docs", [])), "iteration": iteration},
+                    "timestamp": time.time(),
+                })
+            except asyncio.TimeoutError:
+                logger.warning(f"Retriever timed out on iteration {iteration}")
+                yield sse_event("agent_done", {"agent": "retriever", "label": "Retriever", "error": "timeout"})
+
             await asyncio.sleep(0.2)
 
-            # Critic
+            # Agent 5: Critic
             yield sse_event("agent_start", {
-                "agent": "critic",
-                "label": "Critic",
-                "icon": "🧐",
+                "agent": "critic", "label": "Critic", "icon": "🧐",
                 "message": "Evaluating research quality with hybrid scorer...",
-                "iteration": iteration,
-                "timestamp": time.time(),
+                "iteration": iteration, "timestamp": time.time(),
             })
-            state = await loop.run_in_executor(None, critic_node, state)
-            score = state.get("confidence_score", 0.0)
-            critique = state.get("critique", "")
-            yield sse_event("agent_done", {
-                "agent": "critic",
-                "label": "Critic",
-                "result": {
-                    "confidence": round(score, 3),
-                    "critique": critique,
-                    "score_breakdown": state.get("score_breakdown", {}),
-                    "passed": score >= CONFIDENCE_THRESHOLD,
-                },
-                "iteration": iteration,
-                "timestamp": time.time(),
-            })
+            metrics.start_agent("critic")
+            try:
+                state = await asyncio.wait_for(
+                    critic_node(state),
+                    timeout=AGENT_TIMEOUT
+                )
+                score = state.get("confidence_score", 0.0)
+                yield sse_event("agent_done", {
+                    "agent": "critic", "label": "Critic",
+                    "result": {
+                        "confidence": round(score, 3),
+                        "critique": state.get("critique", ""),
+                        "score_breakdown": state.get("score_breakdown", {}),
+                        "passed": score >= CONFIDENCE_THRESHOLD,
+                        "iteration": iteration,
+                    },
+                    "timestamp": time.time(),
+                })
+            except asyncio.TimeoutError:
+                logger.warning(f"Critic timed out on iteration {iteration}")
+                yield sse_event("agent_done", {"agent": "critic", "label": "Critic", "error": "timeout"})
+
             await asyncio.sleep(0.2)
 
-            if score >= CONFIDENCE_THRESHOLD or state.get("iteration_count", 0) >= MAX_ITERATIONS:
+            if score >= CONFIDENCE_THRESHOLD:
                 break
 
         # Human in the Loop (HITL) check
         yield sse_event("hitl_pause", {
             "message": "Human review required. Do you want to generate the final report?",
-            "timestamp": time.time(),
-            "thread_id": thread_id,
+            "timestamp": time.time(), "thread_id": thread_id,
         })
-        
-        # Wait for the user to confirm via the /research/resume endpoint
-        await RESUME_EVENTS[thread_id].wait()
-        
-        # Cleanup event
+
+        # Wait for user to confirm via /research/resume endpoint
+        try:
+            await asyncio.wait_for(
+                RESUME_EVENTS[thread_id].wait(),
+                timeout=300  # 5 minute wait
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"HITL timeout for thread {thread_id}")
+            del RESUME_EVENTS[thread_id]
+            yield sse_event("error", {"message": "Human review timeout", "timestamp": time.time()})
+            return
+
         del RESUME_EVENTS[thread_id]
 
-        # Reporter
+        # Agent 6: Reporter
         yield sse_event("agent_start", {
-            "agent": "reporter",
-            "label": "Reporter",
-            "icon": "📝",
-            "message": "Writing tone-aware research report...",
-            "timestamp": time.time(),
+            "agent": "reporter", "label": "Reporter", "icon": "📝",
+            "message": "Writing tone-aware research report...", "timestamp": time.time(),
         })
-        state = await loop.run_in_executor(None, reporter_node, state)
-        yield sse_event("agent_done", {
-            "agent": "reporter",
-            "label": "Reporter",
-            "result": {"report_length": len(state.get("final_report", ""))},
-            "timestamp": time.time(),
-        })
+        metrics.start_agent("reporter")
+        try:
+            state = await asyncio.wait_for(
+                reporter_node(state),
+                timeout=AGENT_TIMEOUT * 2  # Report generation takes longer
+            )
+            yield sse_event("agent_done", {
+                "agent": "reporter", "label": "Reporter",
+                "result": {"report_length": len(state.get("final_report", "")), "timestamp": time.time()},
+            })
+        except asyncio.TimeoutError:
+            logger.warning("Reporter timed out")
+            yield sse_event("agent_done", {"agent": "reporter", "label": "Reporter", "error": "timeout"})
 
-        # Complete
-        
-        # Ensure plain LLM is sent if it hasn't been already
+        # Ensure plain LLM response is sent
         if not plain_llm_sent:
             try:
                 plain_res = await plain_llm_task
                 yield sse_event("plain_llm_done", {"response": plain_res.content, "timestamp": time.time()})
             except Exception as e:
                 logger.error(f"Plain LLM failed: {e}")
-                yield sse_event("plain_llm_done", {"response": "Failed to generate plain LLM response.", "timestamp": time.time()})
 
         complete_payload = {
             "report": state.get("final_report", ""),
@@ -340,13 +405,13 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
             "score_breakdown": state.get("score_breakdown", {}),
             "timestamp": time.time(),
         }
-        QUERY_CACHE[cache_key] = complete_payload
+        cache_manager.set(cache_key, complete_payload)
         logger.info(f"Cache miss for query: {query}. Stored in cache.")
         yield sse_event("complete", complete_payload)
 
     except Exception as e:
         tb = traceback.format_exc()
-        print(f"[API ERROR] {e}\n{tb}")
+        logger.error(f"[API ERROR] {e}\n{tb}")
         yield sse_event("error", {
             "message": str(e),
             "detail": tb[:500],
@@ -356,17 +421,11 @@ async def stream_pipeline(query: str) -> AsyncGenerator[str, None]:
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-
-@app.get("/health")
-async def health():
-    return {"status": "healthy", "version": "2.0.0"}
-
-
 @app.post("/research/stream")
 async def research_stream(request: ResearchRequest):
     """SSE endpoint — streams agent events as they happen."""
     return StreamingResponse(
-        stream_pipeline(request.query),
+        stream_pipeline(request.query, request.user_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -380,21 +439,24 @@ async def research_stream(request: ResearchRequest):
 async def research_sync(request: ResearchRequest):
     """Synchronous fallback — waits for full pipeline then returns."""
     cache_key = get_cache_key(request.query)
-    if cache_key in QUERY_CACHE:
+    cached = cache_manager.get(cache_key)
+    if cached:
         logger.info(f"Cache hit for query: {request.query}")
-        cached = QUERY_CACHE[cache_key]
         return {
             "report": cached.get("report", ""),
             "confidence": cached.get("confidence", 0.0),
             "iterations": cached.get("iterations", 0),
             "tone": cached.get("tone", "professional"),
         }
-        
+
     try:
         from core.state import ResearchState
+        import uuid
 
+        thread_id = str(uuid.uuid4())
         initial_state: ResearchState = {
             "query": request.query,
+            "user_id": request.user_id,
             "plan": [],
             "research_results": [],
             "retrieved_docs": [],
@@ -403,38 +465,39 @@ async def research_sync(request: ResearchRequest):
             "iteration_count": 0,
             "final_report": "",
         }
-        import uuid
-        thread_id = str(uuid.uuid4())
         config = {"configurable": {"thread_id": thread_id}}
-        
-        # Run until interrupt
-        compiled_graph.invoke(initial_state, config=config)
-        # Resume to complete the graph
-        final_state = compiled_graph.invoke(None, config=config)
-        
-        # Store in cache for future calls
+
+        # Get compiled graph and use async invoke
+        compiled_graph = await get_graph()
+
+        # Run until interrupt (HITL)
+        await compiled_graph.ainvoke(initial_state, config=config)
+        # Resume to complete
+        final_state = await compiled_graph.ainvoke(None, config=config)
+
         complete_payload = {
             "report": final_state.get("final_report", ""),
             "confidence": final_state.get("confidence_score", 0.0),
             "iterations": final_state.get("iteration_count", 0),
             "tone": final_state.get("tone", "professional"),
         }
-        QUERY_CACHE[cache_key] = complete_payload
-        logger.info(f"Cache miss for query: {request.query}. Stored in cache.")
+        if cache.enabled:
+            await cache.set(request.query, complete_payload)
         return complete_payload
     except Exception as e:
         return {"error": str(e), "report": "Pipeline failed. Check your API keys."}
+
 
 @app.post("/doubt")
 async def doubt_sync(request: DoubtRequest):
     """Answer questions strictly based on the generated report."""
     try:
         from agents.doubt import answer_doubt
-        loop = asyncio.get_event_loop()
-        answer = await loop.run_in_executor(None, answer_doubt, request.report, request.question)
+        answer = await answer_doubt(request.report, request.question)
         return {"answer": answer}
     except Exception as e:
         return {"error": str(e), "answer": "Failed to process doubt."}
+
 
 @app.post("/research/resume")
 async def resume_stream(request: ResumeRequest):
@@ -444,7 +507,8 @@ async def resume_stream(request: ResumeRequest):
         return {"status": "resumed"}
     return {"error": "thread_id not found or expired"}
 
-# Mount static files at root / so style.css and app.js resolve correctly when visiting /
+
+# Mount static files at root / so style.css and app.js resolve correctly
 if os.path.exists(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="web_root")

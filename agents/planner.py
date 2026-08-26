@@ -1,13 +1,16 @@
 import os
+import asyncio
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-from tenacity import retry, stop_after_attempt, wait_exponential
+from core.state import ResearchState
 from core.logger import get_logger
+from core.metrics import metrics
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Load .env from the project root (one level up from agents/)
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX
+from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
 
 logger = get_logger(__name__)
 
@@ -19,7 +22,9 @@ def invoke_with_retry(llm, prompt):
     return llm.invoke(prompt)
 
 
-def planner_node(state):
+async def planner_node(state: ResearchState) -> ResearchState:
+    """Async planner node with timeout and metrics."""
+    loop = asyncio.get_event_loop()
     query = state["query"]
     logger.info(f"Planning sub-tasks for query: {query}")
 
@@ -41,28 +46,41 @@ Return ONLY a plain list of clear research topics, one per line. Do NOT include 
 Query: {query}"""
 
     try:
-        response = invoke_with_retry(llm, prompt)
+        # Timeout protection
+        response = await asyncio.wait_for(
+            loop.run_in_executor(None, invoke_with_retry, llm, prompt),
+            timeout=AGENT_TIMEOUT
+        )
+        raw_lines = response.content.strip().split("\n")
+        cleaned_tasks = []
+        for line in raw_lines:
+            line = line.strip()
+            if not line:
+                continue
+            # Strip leading numbers (e.g. "1. ", "1)") or bullets ("- ", "* ")
+            while line and (line[0].isdigit() or line[0] in ".-*#\t "):
+                line = line.lstrip("0123456789.-*#\t ")
+            if line:
+                cleaned_tasks.append(line)
+
+        logger.info(f"Generated {len(cleaned_tasks)} cleaned sub-tasks")
+        state["plan"] = cleaned_tasks
+        state["iteration_count"] = 0
+
+        # Record metrics
+        metrics.end_agent("planner", input_tokens=len(query), output_tokens=len(response.content))
+
+    except asyncio.TimeoutError:
+        logger.warning(f"Planner timeout after {AGENT_TIMEOUT}s")
+        state["plan"] = [query]
+        state["iteration_count"] = 0
+        metrics.end_agent("planner", error="timeout")
     except Exception as e:
         logger.error(f"LLM call failed after retries: {e}")
         state["plan"] = [query]
         state["iteration_count"] = 0
-        return state
+        metrics.end_agent("planner", error=str(e))
 
-    raw_lines = response.content.strip().split("\n")
-    cleaned_tasks = []
-    for line in raw_lines:
-        line = line.strip()
-        if not line:
-            continue
-        # Strip leading numbers (e.g. "1. ", "1)") or bullets ("- ", "* ")
-        while line and (line[0].isdigit() or line[0] in ".-*#\t "):
-            line = line.lstrip("0123456789.-*#\t ")
-        if line:
-            cleaned_tasks.append(line)
-
-    logger.info(f"Generated {len(cleaned_tasks)} cleaned sub-tasks")
-    state["plan"] = cleaned_tasks
-    state["iteration_count"] = 0
     return state
 
 
@@ -74,4 +92,3 @@ if __name__ == "__main__":
     print("Generated Plan:")
     for task in result["plan"]:
         print(f" - {task}")
-

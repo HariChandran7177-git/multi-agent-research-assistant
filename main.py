@@ -1,13 +1,25 @@
 
+import asyncio
 import sys
 from core.graph import build_graph
 from core.state import ResearchState
 
-# Build the graph once at startup — reused across all queries
-_graph = build_graph()
+
+# Global graph instance
+_graph = None
 
 
-def run_pipeline(query: str) -> str:
+async def get_graph():
+    """Get or initialize the singleton graph."""
+    global _graph
+    if _graph is None:
+        _graph = await build_graph()
+    return _graph
+
+
+async def run_pipeline(query: str) -> str:
+    graph = await get_graph()
+
     initial_state: ResearchState = {
         "query": query,
         "plan": [],
@@ -19,11 +31,11 @@ def run_pipeline(query: str) -> str:
         "final_report": "",
     }
 
-    final_state = _graph.invoke(initial_state)
+    final_state = await graph.ainvoke(initial_state)
     return final_state["final_report"]
 
 
-def main():
+async def main():
     if len(sys.argv) < 2:
         print("Usage: python main.py \"Please type the question you want to research here !\"")
         sys.exit(1)
@@ -32,7 +44,7 @@ def main():
     print(f"\nResearching: {query}\n")
     print("Running pipeline... (this may take 30-60 seconds)\n")
 
-    report = run_pipeline(query)
+    report = await run_pipeline(query)
 
     print("\n" + "=" * 50)
     print("FINAL REPORT")
@@ -41,4 +53,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

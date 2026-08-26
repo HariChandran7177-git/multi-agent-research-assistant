@@ -1,12 +1,14 @@
 import os
 import json
+import asyncio
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from core.state import ResearchState
 from core.logger import get_logger
+from core.metrics import metrics
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX
+from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -61,13 +63,18 @@ def _detect_tone_heuristic(query: str) -> str:
         return "professional and informative"
     return "professional and informative"
 
-def router_node(state: ResearchState) -> ResearchState:
+async def router_node(state: ResearchState) -> ResearchState:
+    """Async router node with timeout and metrics."""
+    loop = asyncio.get_event_loop()
     logger.info("Routing query to determine path and tone")
     query = state["query"]
-    prompt = ROUTER_PROMPT.format(query=query)
 
     try:
-        response = invoke_with_retry(llm, prompt)
+        # Timeout protection
+        response = await asyncio.wait_for(
+            loop.run_in_executor(None, invoke_with_retry, llm, ROUTER_PROMPT.format(query=query)),
+            timeout=AGENT_TIMEOUT
+        )
         content = response.content.strip()
         # Strip markdown code blocks if present
         if content.startswith("```json"):
@@ -90,11 +97,19 @@ def router_node(state: ResearchState) -> ResearchState:
         else:
             logger.info("Query requires research. Routing to Planner.")
 
+        # Record metrics
+        metrics.end_agent("router", input_tokens=len(query), output_tokens=len(content))
+
+    except asyncio.TimeoutError:
+        logger.warning(f"Router timeout after {AGENT_TIMEOUT}s, using heuristic")
+        state["is_casual"] = False
+        state["tone"] = _detect_tone_heuristic(query)
+        metrics.end_agent("router", error="timeout")
     except Exception as e:
         logger.warning(f"Router LLM failed ({e}), using heuristic tone detection.")
         state["is_casual"] = False
         state["tone"] = _detect_tone_heuristic(query)
-        logger.info(f"Heuristic tone: {state['tone']}")
+        metrics.end_agent("router", error=str(e))
 
     return state
 
