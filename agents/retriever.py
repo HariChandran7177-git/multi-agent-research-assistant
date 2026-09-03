@@ -1,3 +1,4 @@
+from sentence_transformers import SentenceTransformer
 import os
 import asyncio
 import uuid
@@ -11,22 +12,35 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from core.state import ResearchState
 from core.logger import get_logger
 from core.metrics import metrics
-from core.config import MAX_ITERATIONS, AGENT_TIMEOUT
+from core.config import MAX_ITERATIONS, AGENT_TIMEOUT, GROQ_MODEL, GROQ_API_KEY
+from langchain_groq import ChatGroq
 
 load_dotenv()
 
 logger = get_logger(__name__)
 
-embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/gemini-embedding-001",
-    google_api_key=os.getenv("GOOGLE_API_KEY")
-)
+
+_embed_model = SentenceTransformer('all-MiniLM-L6-v2')  # loaded once at import
+
+
+class LocalEmbeddings:
+    """Drop-in replacement matching the langchain embeddings interface used below."""
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return _embed_model.encode(texts, convert_to_numpy=True).tolist()
+
+    def embed_query(self, text: str) -> list[float]:
+        return _embed_model.encode(text, convert_to_numpy=True).tolist()
+
+
+embeddings = LocalEmbeddings()
 
 
 def get_qdrant_client():
     """Initialize Qdrant client."""
     try:
-        client = QdrantClient(url=os.getenv("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
+        client = QdrantClient(url=os.getenv("QDRANT_URL"),
+                              api_key=os.getenv("QDRANT_API_KEY"))
         # Verify the connection actually works, not just that the client object was created
         client.get_collections()
         logger.info("Connected to remote Qdrant instance.")
@@ -67,10 +81,11 @@ def ensure_collection():
     try:
         collections = qdrant.get_collections().collections
         if COLLECTION_NAME not in [c.name for c in collections]:
-            logger.info(f"Collection '{COLLECTION_NAME}' not found — creating it")
+            logger.info(
+                f"Collection '{COLLECTION_NAME}' not found — creating it")
             qdrant.create_collection(
                 collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=3072, distance=Distance.COSINE)
+                vectors_config=VectorParams(size=384, distance=Distance.COSINE)
             )
             # Payload index is only needed for remote Qdrant; ignore errors for in-memory client
             try:
@@ -85,7 +100,8 @@ def ensure_collection():
                     field_schema="keyword",
                 )
             except Exception as e:
-                logger.debug(f"Payload index creation skipped or failed ({e}); may be in-memory client.")
+                logger.debug(
+                    f"Payload index creation skipped or failed ({e}); may be in-memory client.")
         return True
     except Exception as e:
         logger.warning(f"ensure_collection failed: {e}")
@@ -111,6 +127,65 @@ def _fallback_retrieval(state: ResearchState, texts: List[str], error_msg: str =
     return state
 
 
+async def _filter_important_texts(query: str, texts: List[str], max_items: int = 15) -> List[str]:
+    """Use a fast LLM to pre-filter the most relevant texts before embedding."""
+    if len(texts) <= max_items:
+        return texts
+
+    logger.info(
+        f"Pre-filtering {len(texts)} texts down to {max_items} using LLM...")
+
+    try:
+        llm = ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY, temperature=0.0)
+
+        # Prepare context chunks (truncate to save tokens and speed up)
+        context = ""
+        for i, text in enumerate(texts):
+            preview = text[:400].replace('\n', ' ')
+            context += f"[{i}] {preview}...\n"
+
+        prompt = f"""You are an expert researcher. The user's original query is: "{query}"
+
+Here are several snippets of information scraped from the web:
+{context}
+
+Which snippets are the MOST relevant and important to answer the query?
+Select exactly {max_items} snippets (or fewer if some are completely irrelevant).
+Return ONLY a comma-separated list of the index numbers (e.g., 0, 3, 5, 12). No other text."""
+
+        response = await llm.ainvoke(prompt)
+        content = response.content.strip()
+
+        # Parse indices robustly
+        import re
+        indices = [int(idx) for idx in re.findall(r'\d+', content)]
+
+        # Filter and validate
+        valid_indices = [idx for idx in indices if 0 <= idx < len(texts)]
+
+        if not valid_indices:
+            logger.warning(
+                "LLM returned no valid indices. Falling back to first items.")
+            return texts[:max_items]
+
+        # De-duplicate while preserving order
+        unique_indices = []
+        for idx in valid_indices:
+            if idx not in unique_indices:
+                unique_indices.append(idx)
+
+        unique_indices = unique_indices[:max_items]
+
+        logger.info(
+            f"LLM selected {len(unique_indices)} indices: {unique_indices}")
+        return [texts[i] for i in unique_indices]
+
+    except Exception as e:
+        logger.error(
+            f"Pre-filtering LLM failed: {e}. Falling back to first {max_items} items.")
+        return texts[:max_items]
+
+
 async def retriever_node(state: ResearchState) -> ResearchState:
     """Async retriever node with timeout and metrics."""
     loop = asyncio.get_event_loop()
@@ -125,7 +200,10 @@ async def retriever_node(state: ResearchState) -> ResearchState:
 
     session_id = str(uuid.uuid4())  # unique tag for THIS run only
     user_id = state.get("user_id", "default_user")
-    texts = state.get("research_results", [])
+
+    # Intelligently filter to top 15 chunks to avoid Google Gemini 429 rate limits
+    raw_texts = state.get("research_results", [])
+    texts = await _filter_important_texts(state.get("query", ""), raw_texts, max_items=15)
 
     # Ensure collection exists
     try:
@@ -149,7 +227,8 @@ async def retriever_node(state: ResearchState) -> ResearchState:
     except Exception as e:
         logger.error(f"Error embedding content ({type(e).__name__}): {e}")
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            logger.warning("Gemini rate limit hit during embedding. Using fallback.")
+            logger.warning(
+                "Gemini rate limit hit during embedding. Using fallback.")
             return _fallback_retrieval(state, texts, "rate_limit")
         return _fallback_retrieval(state, texts, f"embedding error: {e}")
 
@@ -157,7 +236,8 @@ async def retriever_node(state: ResearchState) -> ResearchState:
         PointStruct(
             id=str(uuid.uuid4()),
             vector=vectors[i],
-            payload={"text": texts[i], "session_id": session_id, "user_id": user_id}
+            payload={"text": texts[i],
+                     "session_id": session_id, "user_id": user_id}
         )
         for i in range(len(texts))
     ]
@@ -165,7 +245,8 @@ async def retriever_node(state: ResearchState) -> ResearchState:
     # Upsert to Qdrant
     try:
         await asyncio.wait_for(
-            loop.run_in_executor(None, upsert_with_retry, qdrant, COLLECTION_NAME, points),
+            loop.run_in_executor(None, upsert_with_retry,
+                                 qdrant, COLLECTION_NAME, points),
             timeout=AGENT_TIMEOUT
         )
         logger.info(f"Upserted {len(points)} points into Qdrant")
@@ -188,7 +269,8 @@ async def retriever_node(state: ResearchState) -> ResearchState:
     except Exception as e:
         logger.error(f"Error embedding query ({type(e).__name__}): {e}")
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            logger.warning("Gemini rate limit hit during query embedding. Using fallback.")
+            logger.warning(
+                "Gemini rate limit hit during query embedding. Using fallback.")
             return _fallback_retrieval(state, texts, "rate_limit")
         return _fallback_retrieval(state, texts, f"query embedding error: {e}")
 
@@ -196,28 +278,31 @@ async def retriever_node(state: ResearchState) -> ResearchState:
     try:
         query_filter = Filter(
             must=[
-                FieldCondition(key="session_id", match=MatchValue(value=session_id)),
+                FieldCondition(key="session_id",
+                               match=MatchValue(value=session_id)),
                 FieldCondition(key="user_id", match=MatchValue(value=user_id))
             ]
         )
         query_fn = partial(qdrant.query_points,
-            collection_name=COLLECTION_NAME,
-            query=query_vector,
-            limit=5,
-            query_filter=query_filter,
-        )
+                           collection_name=COLLECTION_NAME,
+                           query=query_vector,
+                           limit=5,
+                           query_filter=query_filter,
+                           )
         results = await asyncio.wait_for(
             loop.run_in_executor(None, query_fn),
             timeout=AGENT_TIMEOUT
         )
 
         logger.info(f"Retrieved {len(results.points)} relevant documents")
-        state["retrieved_docs"] = [point.payload["text"] for point in results.points]
+        state["retrieved_docs"] = [point.payload["text"]
+                                   for point in results.points]
         state["qdrant_scores"] = [point.score for point in results.points]
         state["retrieval_available"] = True
 
         # Record metrics
-        metrics.end_agent("retriever", input_tokens=len(state["query"]), output_tokens=len(state["retrieved_docs"]))
+        metrics.end_agent("retriever", input_tokens=len(
+            state["query"]), output_tokens=len(state["retrieved_docs"]))
     except asyncio.TimeoutError:
         logger.error(f"Query points timed out after {AGENT_TIMEOUT}s")
         return _fallback_retrieval(state, texts, "query_timeout")
@@ -237,7 +322,7 @@ if __name__ == "__main__":
             "Coral reefs support 25% of marine species despite covering less than 1% of the ocean floor."
         ]
     }
-    result = retriever_node(test_state)
-    for doc in result["retrieved_docs"]:
+    result = asyncio.run(retriever_node(test_state))
+    for doc in result.get("retrieved_docs", []):
         print(doc)
         print("---")

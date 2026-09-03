@@ -199,7 +199,7 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
     await asyncio.sleep(0.1)
 
     # Check Redis cache
-    cached_result = cache_manager.get(cache_key)
+    cached_result = await cache_manager.get(cache_key)
     if cached_result:
         logger.info(f"Cache hit for query: {query}")
 
@@ -311,7 +311,7 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
                     "tone": state.get("tone", "casual"),
                     "is_casual": True, "timestamp": time.time(),
                 }
-                cache_manager.set(cache_key, complete_payload)
+                await cache_manager.set(cache_key, complete_payload)
                 logger.info(f"Cache miss for query: {query}. Stored in cache.")
                 metrics.end_request()
                 yield sse_event("complete", complete_payload)
@@ -483,7 +483,7 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
                 "score_breakdown": state.get("score_breakdown", {}),
                 "timestamp": time.time(),
             }
-            cache_manager.set(cache_key, complete_payload)
+            await cache_manager.set(cache_key, complete_payload)
             logger.info(f"Cache miss for query: {query}. Stored in cache.")
             # Persist to report history
             save_report(
@@ -575,8 +575,8 @@ async def research_sync(request: ResearchRequest, req: Request):
             "iterations": final_state.get("iteration_count", 0),
             "tone": final_state.get("tone", "professional"),
         }
-        if cache.enabled:
-            await cache.set(request.query, complete_payload)
+        if cache_manager.enabled:
+            await cache_manager.set(request.query, complete_payload)
         return complete_payload
     except Exception as e:
         return {"error": str(e), "report": "Pipeline failed. Check your API keys."}

@@ -3,8 +3,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# LLM settings — groq/compound for orchestration, gpt-oss-20b for reporter (avoids compound rate limits)
-GROQ_MODEL = "groq/compound"
+# LLM settings
+GROQ_MODEL = "openai/gpt-oss-20b"
 GROQ_REPORTER_MODEL = "openai/gpt-oss-20b"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 

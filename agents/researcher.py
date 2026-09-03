@@ -100,7 +100,7 @@ if __name__ == "__main__":
             "Research coral bleaching effects"
         ]
     }
-    result = researcher_node(test_state)
+    result = asyncio.run(researcher_node(test_state))
     for r in result["research_results"]:
         print(r[:150])
         print("---")

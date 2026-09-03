@@ -1,0 +1,4 @@
+2026-09-03 16:43:10 | ERROR    | agents.planner | [Query: explain the technical architecture of the fictiona...] LLM call failed after retries: RetryError[<Future at 0x277ce18a8b0 state=finished raised NotFoundError>]
+2026-09-03 16:43:26 | ERROR    | agents.critic | [Query: explain the technical architecture of the fictiona...] LLM call failed after retries: RetryError[<Future at 0x277cdcbc950 state=finished raised NotFoundError>]
+2026-09-03 16:43:26 | WARNING  | agents.critic | [Query: explain the technical architecture of the fictiona...] Critic failed, proceeding without validation
+2026-09-03 16:43:34 | ERROR    | agents.reporter | [Query: explain the technical architecture of the fictiona...] LLM call failed after retries: Error code: 404 - {'error': {'message': 'The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'code': 'model_not_found'}}

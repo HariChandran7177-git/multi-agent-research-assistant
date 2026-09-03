@@ -49,7 +49,7 @@
   </tr>
   <tr>
     <td>🔁 <strong>Self-Correcting Loop</strong></td>
-    <td>A Critic agent scores research quality using a <strong>hybrid score</strong> (60% LLM + 40% objective signals). If confidence is low, it loops back for another research pass — automatically.</td>
+    <td>A Critic agent scores research quality using a <strong>hybrid score</strong> (7% LLM + 93% objective signals). If confidence is low, it loops back for another research pass — automatically.</td>
   </tr>
   <tr>
     <td>🎭 <strong>Dynamic Tone</strong></td>
@@ -69,7 +69,7 @@
   </tr>
   <tr>
     <td>⏸️ <strong>Human-in-the-Loop (HitL)</strong></td>
-    <td>Execution pauses gracefully before the final report is generated, allowing the user to approve or redirect the research via the frontend or API. Powered by LangGraph's <code>MemorySaver</code>.</td>
+    <td>Execution pauses gracefully before the final report is generated, allowing the user to approve or redirect the research via the frontend or API. Powered by LangGraph's <code>AsyncSqliteSaver</code> checkpointer.</td>
   </tr>
   <tr>
     <td>🔌 <strong>Model Context Protocol (MCP)</strong></td>
@@ -100,9 +100,9 @@ flowchart TD
         B -- Requires Research --> C[📋 Planner\nBreaks into 4-5 sub-tasks]
         C --> D[🔍 Researcher\nParallel Tavily Web Search]
         D --> E[🗄️ Retriever\nEmbed → Qdrant → Top-K Recall]
-        E --> F[🧐 Critic\nHybrid Score: 60% LLM + 40% Objective]
-        F -- score < 0.72 AND iterations < 3 --> D
-        F -- score ≥ 0.72 OR max iterations --> G[📝 Reporter\nTone-Aware Markdown Report]
+        E --> F[🧐 Critic\nHybrid Score: 7% LLM + 93% Objective]
+        F -- score < 0.8 AND iterations < 3 --> D
+        F -- score ≥ 0.8 OR max iterations --> G[📝 Reporter\nTone-Aware Markdown Report]
     end
 
     G --> Z2([✅ Final Report])
@@ -115,8 +115,9 @@ flowchart TD
 | Layer | Technology | Purpose |
 |---|---|---|
 | **Orchestration** | [LangGraph](https://github.com/langchain-ai/langgraph) | Stateful agent graph with conditional edges |
-| **LLM Engine** | [Groq](https://groq.com) · `llama-3.3-70b-versatile` | Fast inference for Planner, Critic, Reporter |
-| **Router LLM** | [Groq](https://groq.com) · `llama-3.1-8b-instant` | Lightweight, fast routing decisions |
+| **LLM Engine** | [Groq](https://groq.com) · `llama-3.3-70b-versatile` | Reporter and Doubt agent (heavier model for final output) |
+| **Router LLM** | [Groq](https://groq.com) · `groq/compound-mini` | Lightweight, fast routing decisions |
+| **Planner / Researcher / Critic LLM** | [Groq](https://groq.com) · `llama-3.1-8b-instant` | Fast inference for planning, research, and evaluation |
 | **Web Search** | [Tavily API](https://tavily.com) (Advanced Depth) | Real-time web research |
 | **Embeddings** | [Google Gemini](https://ai.google.dev) · `gemini-embedding-001` | 3072-dimensional semantic vectors |
 | **Vector Database** | [Qdrant Cloud](https://qdrant.tech) | Cosine-similarity retrieval with session filtering |
@@ -249,8 +250,11 @@ multi-agent-research-assistant/
 ├── assets/banner.png    # Repo banner
 ├── main.py              # CLI entry point
 ├── .env.example         # API key template
-├── CONTRIBUTING.md
-├── CHANGELOG.md
+├── docs/
+│   ├── CONTRIBUTING.md
+│   ├── CHANGELOG.md
+│   ├── DECISIONS.md
+│   └── PROJECT_DOCUMENTATION.md
 └── LICENSE
 ```
 
@@ -285,7 +289,7 @@ Tests are designed to mock all external APIs (Groq, Tavily, Qdrant) — no real 
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+Contributions are welcome! Please read [CONTRIBUTING.md](docs/CONTRIBUTING.md) first.
 
 1. Fork the repo
 2. Create a branch: `git checkout -b feature/your-feature`

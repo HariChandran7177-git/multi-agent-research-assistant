@@ -19,6 +19,9 @@ llm = ChatGroq(
     temperature=0.4,
 )
 
+# Minimum confidence below which we still write a report, but force strict grounding
+LOW_CONFIDENCE_THRESHOLD = 0.5
+
 REPORTER_PROMPT = """You are writing a research report. Follow these instructions in order.
 
 ## TONE (follow this first, before anything else)
@@ -29,6 +32,10 @@ Examples of what this means in practice:
 - "academic": cite sources inline, use formal language, structured sections
 - "funny": use wit and humour while still being accurate
 - "professional and informative": clear, factual, no filler phrases
+- "storyteller": frame the explanation as a narrative with a beginning, middle, and end
+- "skeptical analyst": question claims, note where evidence is thin, avoid overstating certainty
+- "casual friend": relaxed, first-person asides, contractions, no corporate tone
+- "executive briefing": lead with the bottom line, keep it tight, use short punchy bullets
 
 ## YOUR QUERY
 {query}
@@ -60,6 +67,11 @@ Choose format based on what the content needs — not habit:
 Write the full report now in the tone: **{tone}**
 """
 
+LOW_CONFIDENCE_APPENDIX = """
+
+IMPORTANT: The research for this query was limited or incomplete (confidence score: {confidence:.2f}). Only state facts explicitly present in the research findings and retrieved documents above. Do not add outside knowledge, invented statistics, dates, prices, or assumed details. If information is missing or unclear, say so directly in the report instead of filling the gap. Add a short note near the top flagging that research coverage was limited.
+"""
+
 
 def _is_rate_limit(exc):
     return "rate" in str(exc).lower() or "429" in str(exc)
@@ -67,7 +79,8 @@ def _is_rate_limit(exc):
 
 @retry(
     stop=stop_after_attempt(RETRY_ATTEMPTS),
-    wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX),
+    wait=wait_exponential(multiplier=RETRY_MULTIPLIER,
+                          min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX),
     retry=retry_if_exception_type(Exception),
     reraise=True,
 )
@@ -75,42 +88,42 @@ def invoke_with_retry(llm, prompt):
     return llm.invoke(prompt)
 
 
-async def reporter_node(state: ResearchState) -> ResearchState:
-    """Async reporter node with timeout and metrics."""
-    loop = asyncio.get_event_loop()
-    logger.info("Writing final report")
-
-    plan_text = "\n".join(state.get("plan", []))
-    # Truncate aggressively to stay under Groq token limits
-    research_text = "\n".join(state.get("research_results", []))[:4000]
-    docs_text = "\n".join(state.get("retrieved_docs", []))[:3000]
-    tone = state.get("tone", "super friendly and conversational")
-
+def _build_prompt(tone, query, plan_text, research_text, docs_text, confidence=None):
+    """Build the reporter prompt, optionally appending a strict-grounding warning for low-confidence research."""
     prompt = REPORTER_PROMPT.format(
         tone=tone,
-        query=state["query"],
+        query=query,
         plan=plan_text,
         research_results=research_text,
         retrieved_docs=docs_text,
     )
+    if confidence is not None and confidence < LOW_CONFIDENCE_THRESHOLD:
+        prompt += LOW_CONFIDENCE_APPENDIX.format(confidence=confidence)
+    return prompt
 
-    try:
-        # Timeout protection
-        response = await asyncio.wait_for(
-            loop.run_in_executor(None, invoke_with_retry, llm, prompt),
-            timeout=AGENT_TIMEOUT
-        )
-        state["final_report"] = response.content.strip()
-        logger.info("Report generated successfully")
 
-        # Record metrics
-        input_tokens = len(prompt)
-        output_tokens = len(response.content)
-        metrics.end_agent("reporter", input_tokens=input_tokens, output_tokens=output_tokens)
+def _no_research_fallback(query, plan_text, confidence):
+    """Honest fallback report when no research data was gathered at all."""
+    return f"""# {query}
 
-    except asyncio.TimeoutError:
-        logger.error(f"Reporter timeout after {AGENT_TIMEOUT}s")
-        state["final_report"] = f"""# Research Results for: {state['query']}
+> ⚠️ **Limited research available** — search and retrieval did not return verified sources for this query (possible cause: API rate limits or credit exhaustion). Confidence score: {confidence:.2f}
+
+## What I can tell you
+I wasn't able to gather real-time, sourced information on this topic right now. Rather than guess, here's what I'd recommend:
+- Try the query again in a few minutes (search API limits often reset quickly)
+- Rephrase the query to be more specific
+- If this persists, check that your search API key/credits are active
+
+## Research Plan (what was attempted)
+{plan_text[:1000] if plan_text else "No plan was generated."}
+
+---
+*No report was generated from unverified sources, to avoid presenting fabricated information as fact.*
+"""
+
+
+def _timeout_fallback(query, plan_text, research_text):
+    return f"""# Research Results for: {query}
 
 > ⚠️ The report writer timed out after {AGENT_TIMEOUT} seconds.
 
@@ -123,12 +136,12 @@ async def reporter_node(state: ResearchState) -> ResearchState:
 ---
 *Report generation timed out. Please try again.*
 """
-        metrics.end_agent("reporter", error="timeout")
-    except Exception as e:
-        logger.error(f"LLM call failed after retries: {e}")
-        state["final_report"] = f"""# Research Results for: {state['query']}
 
-> ⚠️ The report writer encountered an error: {str(e)[:100]}
+
+def _error_fallback(query, plan_text, research_text, error):
+    return f"""# Research Results for: {query}
+
+> ⚠️ The report writer encountered an error: {str(error)[:100]}
 
 ## Research Plan
 {plan_text[:1000]}
@@ -139,6 +152,69 @@ async def reporter_node(state: ResearchState) -> ResearchState:
 ---
 *Report generation failed. Please check your API keys and try again.*
 """
+
+
+async def reporter_node(state: ResearchState) -> ResearchState:
+    """Async reporter node with timeout, metrics, and grounding safeguards.
+
+    Behavior:
+    - No research data at all -> honest fallback, no LLM call (saves credits, avoids hallucination)
+    - Some research but confidence below LOW_CONFIDENCE_THRESHOLD -> write report, but force strict
+      grounding to retrieved data only, and flag the limitation in the output
+    - Confidence at/above threshold -> normal report generation
+    """
+    loop = asyncio.get_event_loop()
+    logger.info("Writing final report")
+
+    plan_text = "\n".join(state.get("plan", []))
+    research_list = state.get("research_results", [])
+    docs_list = state.get("retrieved_docs", [])
+    # truncate aggressively to stay under token limits
+    research_text = "\n".join(research_list)[:4000]
+    docs_text = "\n".join(docs_list)[:3000]
+    tone = state.get("tone", "super friendly and conversational")
+    confidence = state.get("confidence_score", 0)
+
+    has_research = bool(research_list) or bool(docs_list)
+
+    if not has_research:
+        logger.warning(
+            f"No research data at all (confidence={confidence}) — returning honest limited response")
+        state["final_report"] = _no_research_fallback(
+            state["query"], plan_text, confidence)
+        metrics.end_agent("reporter", error="no_research_data")
+        return state
+
+    if confidence < LOW_CONFIDENCE_THRESHOLD:
+        logger.warning(
+            f"Low confidence research (confidence={confidence}) — writing report with strict grounding")
+
+    prompt = _build_prompt(
+        tone, state["query"], plan_text, research_text, docs_text, confidence)
+
+    try:
+        response = await asyncio.wait_for(
+            loop.run_in_executor(None, invoke_with_retry, llm, prompt),
+            timeout=AGENT_TIMEOUT
+        )
+        state["final_report"] = response.content.strip()
+        logger.info("Report generated successfully")
+
+        input_tokens = len(prompt)
+        output_tokens = len(response.content)
+        metrics.end_agent("reporter", input_tokens=input_tokens,
+                          output_tokens=output_tokens)
+
+    except asyncio.TimeoutError:
+        logger.error(f"Reporter timeout after {AGENT_TIMEOUT}s")
+        state["final_report"] = _timeout_fallback(
+            state["query"], plan_text, research_text)
+        metrics.end_agent("reporter", error="timeout")
+
+    except Exception as e:
+        logger.error(f"LLM call failed after retries: {e}")
+        state["final_report"] = _error_fallback(
+            state["query"], plan_text, research_text, e)
         metrics.end_agent("reporter", error=str(e))
 
     return state
@@ -155,5 +231,5 @@ if __name__ == "__main__":
         "iteration_count": 1,
         "final_report": "",
     }
-    result = reporter_node(test_state)
+    result = asyncio.run(reporter_node(test_state))
     print(result["final_report"])

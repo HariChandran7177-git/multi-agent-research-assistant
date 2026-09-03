@@ -1,5 +1,6 @@
 import json
 import asyncio
+import re
 from langchain_groq import ChatGroq
 from core.state import ResearchState
 import os
@@ -8,7 +9,7 @@ from core.metrics import metrics
 from tenacity import retry, stop_after_attempt, wait_exponential
 from core.logger import get_logger
 from core.scorer import calculate_objective_score, calculate_hybrid_score
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
+from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT, MAX_ITERATIONS
 
 load_dotenv()
 
@@ -72,24 +73,25 @@ async def critic_node(state: ResearchState) -> ResearchState:
         content = response.content.strip()
     except asyncio.TimeoutError:
         logger.error(f"Critic timeout after {AGENT_TIMEOUT}s")
+        logger.warning("Critic failed — confidence forced to 0 to trigger downstream safety checks")
         state["confidence_score"] = 0.0
-        state["critique"] = f"Critic timed out after {AGENT_TIMEOUT}s"
+        state["critique"] = "Critic evaluation failed due to a timeout — confidence forced to 0 to trigger downstream safety checks."
         state["iteration_count"] = state.get("iteration_count", 0) + 1
         metrics.end_agent("critic", error="timeout")
         return state
     except Exception as e:
         logger.error(f"LLM call failed after retries: {e}")
+        logger.warning("Critic failed — confidence forced to 0 to trigger downstream safety checks")
         state["confidence_score"] = 0.0
-        state["critique"] = f"Critic failed to run: {e}"
+        state["critique"] = "Critic evaluation failed due to an API error — confidence forced to 0 to trigger downstream safety checks."
         state["iteration_count"] = state.get("iteration_count", 0) + 1
         metrics.end_agent("critic", error=str(e))
         return state
 
-    # Strip accidental markdown fences if the model adds them
-    if content.startswith("```"):
-        content = content.strip("`")
-        if content.startswith("json"):
-            content = content[4:].strip()
+    # Robustly extract JSON object in case of extra text or markdown
+    match = re.search(r'\{.*\}', content, re.DOTALL)
+    if match:
+        content = match.group(0)
 
     try:
         parsed = json.loads(content)
@@ -136,7 +138,7 @@ if __name__ == "__main__":
         "iteration_count": 0,
         "final_report": "",
     }
-    result = critic_node(test_state)
+    result = asyncio.run(critic_node(test_state))
     print("Score:", result["confidence_score"])
     print("Critique:", result["critique"])
     print("Iteration:", result["iteration_count"])

@@ -88,7 +88,7 @@ if __name__ == "__main__":
     sample_state = {"query": "AI agent architectures and multi-agent coordination"}
     print("\n--- Testing Planner Agent ---")
     print(f"Query: {sample_state['query']}\n")
-    result = planner_node(sample_state)
+    result = asyncio.run(planner_node(sample_state))
     print("Generated Plan:")
     for task in result["plan"]:
         print(f" - {task}")

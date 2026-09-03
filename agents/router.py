@@ -126,5 +126,6 @@ if __name__ == "__main__":
         s: ResearchState = {"query": q, "is_casual": False, "plan": [], "research_results": [],
                             "retrieved_docs": [], "critique": "", "confidence_score": 0.0,
                             "iteration_count": 0, "final_report": ""}
-        r = router_node(s)
+        r = asyncio.run(router_node(s))
         print(f"Q: {q!r}\n  → casual={r['is_casual']}, tone={r['tone']!r}\n")
+
