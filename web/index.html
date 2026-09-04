@@ -95,10 +95,10 @@
     <h2 class="section-title">Six agents.<br/>One unified intelligence.</h2>
     <p class="section-subtitle">Every query triggers a choreographed pipeline - each agent playing a precise role, self-correcting until confident.</p>
     <div class="pipeline-grid">
-      <div class="agent-card" data-delay="0"><span class="agent-num">01</span><span class="agent-icon">🔀</span><div class="agent-name">Router</div><div class="agent-desc">Intercepts casual queries for instant answers. Detects tone - formal, friendly, technical, ELI5 - from your words.</div><span class="agent-tag">llama-3.1-8b</span></div>
-      <div class="agent-card" data-delay="80"><span class="agent-num">02</span><span class="agent-icon">📋</span><div class="agent-name">Planner</div><div class="agent-desc">Classifies intent into 10 research types. Breaks complex queries into 4-5 targeted sub-tasks for full coverage.</div><span class="agent-tag">llama-3.3-70b</span></div>
+      <div class="agent-card" data-delay="0"><span class="agent-num">01</span><span class="agent-icon">🔀</span><div class="agent-name">Router</div><div class="agent-desc">Intercepts casual queries for instant answers. Detects tone - formal, friendly, technical, ELI5 - from your words.</div><span class="agent-tag">gpt-oss-20b</span></div>
+      <div class="agent-card" data-delay="80"><span class="agent-num">02</span><span class="agent-icon">📋</span><div class="agent-name">Planner</div><div class="agent-desc">Classifies intent into 10 research types. Breaks complex queries into 4-5 targeted sub-tasks for full coverage.</div><span class="agent-tag">gpt-oss-20b</span></div>
       <div class="agent-card" data-delay="160"><span class="agent-num">03</span><span class="agent-icon">⚡</span><div class="agent-name">Researcher</div><div class="agent-desc">Fires parallel Tavily web searches via ThreadPoolExecutor. Cuts research time from ~60s to under 10s per pass.</div><span class="agent-tag">Tavily API</span></div>
-      <div class="agent-card" data-delay="240"><span class="agent-num">04</span><span class="agent-icon">🧠</span><div class="agent-name">Retriever</div><div class="agent-desc">Embeds all results with Google Gemini 3072-dim vectors. Retrieves only the most relevant chunks from Qdrant.</div><span class="agent-tag">Qdrant + Gemini</span></div>
+      <div class="agent-card" data-delay="240"><span class="agent-num">04</span><span class="agent-icon">🧠</span><div class="agent-name">Retriever</div><div class="agent-desc">Embeds all results with SentenceTransformers 384-dim vectors. Retrieves only the most relevant chunks from Qdrant.</div><span class="agent-tag">Qdrant + SentenceTransformers</span></div>
       <div class="agent-card" data-delay="320"><span class="agent-num">05</span><span class="agent-icon">🧐</span><div class="agent-name">Critic</div><div class="agent-desc">Hybrid scorer: 60% LLM judgment + 40% objective signals. Loops back if confidence is low - up to 3 times.</div><span class="agent-tag">Self-Correcting</span></div>
       <div class="agent-card" data-delay="400"><span class="agent-num">06</span><span class="agent-icon">📝</span><div class="agent-name">Reporter</div><div class="agent-desc">Writes a fully formatted markdown report, dynamically adapting tone and depth to match your original intent.</div><span class="agent-tag">Tone-Aware</span></div>
     </div>
@@ -176,19 +176,19 @@
               </div>
               
               <!-- HUMAN IN THE LOOP BOX -->
-              <div class="hitl-box" id="hitl-box" style="display:none; margin-top: 15px; padding: 15px; background: rgba(234, 179, 8, 0.1); border-radius: 8px; border: 1px solid rgba(234, 179, 8, 0.2);">
-                <div style="font-weight: 600; margin-bottom: 8px; font-size: 0.95em; color: #eab308;">Human Review Required</div>
-                <div style="font-size: 0.9em; margin-bottom: 12px; color: #ddd;" id="hitl-msg">The agents have finished their research. Do you want them to write the final report now?</div>
-                <button onclick="resumeHitl()" id="hitl-btn" style="padding: 8px 16px; border-radius: 6px; background: #eab308; color: black; border: none; font-weight: 600; cursor: pointer; transition: opacity 0.2s;">Yes, Write Report</button>
+              <div class="hitl-box" id="hitl-box" style="display:none; margin-top: 15px; padding: 15px; border-radius: 8px;">
+                <div style="font-weight: 600; margin-bottom: 8px; font-size: 0.95em; color: var(--amber);">Human Review Required</div>
+                <div style="font-size: 0.9em; margin-bottom: 12px; color: var(--text-muted);" id="hitl-msg">The agents have finished their research. Do you want them to write the final report now?</div>
+                <button onclick="resumeHitl()" id="hitl-btn" style="padding: 8px 16px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; transition: opacity 0.2s;">Yes, Write Report</button>
               </div>
               <!-- NEW DOUBT BOX -->
-              <div class="doubt-box" id="doubt-box" style="display:none; margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+              <div class="doubt-box" id="doubt-box" style="display:none; margin-top: 15px; padding: 15px; border-radius: 8px;">
                 <div style="font-weight: 600; margin-bottom: 8px; font-size: 0.9em; color: var(--emerald);">Ask about this report</div>
                 <div style="display: flex; gap: 8px;">
-                  <input type="text" id="doubt-input" placeholder="What does this report say about X?" style="flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.3); color: white; font-family: inherit;">
+                  <input type="text" id="doubt-input" placeholder="What does this report say about X?" style="flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-light); background: rgba(0,0,0,0.3); color: white; font-family: inherit;">
                   <button onclick="askDoubt()" id="doubt-btn" style="padding: 8px 16px; border-radius: 6px; background: var(--emerald); color: black; border: none; font-weight: 600; cursor: pointer; transition: opacity 0.2s;">Ask</button>
                 </div>
-                <div id="doubt-answer" style="margin-top: 10px; font-size: 0.95em; color: #ddd; display: none; line-height: 1.5;"></div>
+                <div id="doubt-answer" style="margin-top: 10px; font-size: 0.95em; color: var(--text-muted); display: none; line-height: 1.5;"></div>
               </div>
             </div>
           </div>
@@ -219,10 +219,10 @@
       <h2 class="section-title">Built on the<br/><span class="gradient-text">best infrastructure</span></h2>
       <div class="tech-grid">
         <div class="tech-card"><span class="tech-icon">🕸️</span><div class="tech-name">LangGraph</div><div class="tech-role">Stateful agent orchestration</div></div>
-        <div class="tech-card"><span class="tech-icon">⚡</span><div class="tech-name">Groq + Llama 3.3</div><div class="tech-role">Ultra-fast LLM inference</div></div>
+        <div class="tech-card"><span class="tech-icon">⚡</span><div class="tech-name">Groq + GPT-OSS</div><div class="tech-role">Ultra-fast LLM inference</div></div>
         <div class="tech-card"><span class="tech-icon">🔍</span><div class="tech-name">Tavily API</div><div class="tech-role">Real-time web research</div></div>
         <div class="tech-card"><span class="tech-icon">🎯</span><div class="tech-name">Qdrant</div><div class="tech-role">Vector database retrieval</div></div>
-        <div class="tech-card"><span class="tech-icon">💎</span><div class="tech-name">Google Gemini</div><div class="tech-role">3072-dim embeddings</div></div>
+        <div class="tech-card"><span class="tech-icon">💎</span><div class="tech-name">SentenceTransformers</div><div class="tech-role">384-dim local embeddings</div></div>
         <div class="tech-card"><span class="tech-icon">🚀</span><div class="tech-name">FastAPI + SSE</div><div class="tech-role">Real-time event streaming</div></div>
         <div class="tech-card"><span class="tech-icon">🔄</span><div class="tech-name">Tenacity</div><div class="tech-role">Exponential backoff retries</div></div>
         <div class="tech-card"><span class="tech-icon">🧵</span><div class="tech-name">ThreadPoolExecutor</div><div class="tech-role">Parallel research tasks</div></div>

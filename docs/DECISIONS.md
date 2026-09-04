@@ -23,12 +23,13 @@ This document outlines key technical decisions based strictly on the current imp
 ### 3. Loop Thresholds & Forced Exits (`CONFIDENCE_THRESHOLD = 0.8`, `MAX_ITERATIONS = 3`)
 * **Decision:** Set in `core/config.py`. The Critic loop terminates if the hybrid score hits `0.8` OR if `iteration_count >= 3`.
 * **Reasoning:** We need a stringent bar (0.8) to ensure high-quality research, but we must cap loops to prevent infinite API spend and endless latency. 
-* **Consequence / Mitigation:** In `core/graph.py`, the `should_loop` function routes to `"reporter"` if `iterations >= MAX_ITERATIONS`, *even if the score is terrible*. If the threshold isn't met after 3 passes, the pipeline proceeds to the Reporter with low-confidence/empty research. **This is now mitigated** by two safeguards in `agents/reporter.py`: (1) if no research data exists at all, the Reporter skips the LLM call entirely and returns an honest "limited research available" fallback message; (2) if some data exists but `confidence_score < 0.5`, a strict-grounding appendix is injected into the prompt instructing the LLM to only state facts present in the provided research and flag gaps explicitly.
+* **Consequence / Mitigation:** In `core/graph.py`, the `should_loop` function routes to `"reporter"` if `iterations >= MAX_ITERATIONS`, *even if the score is terrible*. If the threshold isn't met after 3 passes, the pipeline proceeds to the Reporter with low-confidence/empty research. **This is mitigated** by three-tier grounding safeguards in `agents/reporter.py` (see Project Documentation).
 
-### 4. Vector Database: Qdrant
-* **Decision:** Used in `agents/retriever.py` for embedding storage and similarity search.
-* **Alternatives considered:** FAISS (in-memory, no persistent multi-tenant filtering), Pinecone (expensive), pgvector (heavy dependency).
-* **Reasoning:** Qdrant supports robust Payload filtering. We create a payload index on `session_id` and `user_id`, allowing us to perfectly isolate data between concurrent users while querying the exact same collection (`research_docs`). It also returns raw cosine distance scores, which feed directly into our objective scorer (35% weight).
+### 4. Vector Database & Embeddings: Qdrant & SentenceTransformers
+* **Decision:** Used in `agents/retriever.py` for embedding storage and similarity search. We migrated from Google Gemini API embeddings to a local `SentenceTransformer` (`all-MiniLM-L6-v2`).
+* **Alternatives considered:** FAISS (in-memory, no persistent multi-tenant filtering), Pinecone (expensive), pgvector (heavy dependency). Using external LLM embeddings (Gemini/OpenAI).
+* **Reasoning:** Switching to local `sentence-transformers` removes the dependency on external embedding APIs, eliminating rate-limits (like Gemini's strict limits) and ensuring zero marginal cost for embedding calls. Qdrant operates on these 384-dimensional vectors using `Distance.COSINE` and supports robust Payload filtering. We create a payload index on `session_id` and `user_id`, allowing us to perfectly isolate data between concurrent users while querying the exact same collection (`research_docs`).
+* **Tradeoff:** A local `all-MiniLM-L6-v2` produces a smaller, potentially less powerful semantic representation (384-dim) compared to hosted, massive models (like Gemini's 3072-dim vectors), but the offline stability and lack of rate limits heavily outweigh this for our RAG workload.
 
 ### 5. Web Search: Tavily API
 * **Decision:** Used by `agents/researcher.py` to execute parallel sub-task queries.
@@ -37,8 +38,21 @@ This document outlines key technical decisions based strictly on the current imp
 
 ### 6. The Router / Planner Split
 * **Decision:** We separate initial routing (`agents/router.py`) from task planning (`agents/planner.py`).
-* **Reasoning:** `router.py` uses a cheap, fast model (`groq/compound-mini`, hardcoded) to determine if a query is `is_casual` and to detect the user's `tone`. If it's a casual greeting ("hello"), it bypasses the entire pipeline and returns instantly. `planner.py` uses `GROQ_MODEL` from `core/config.py` (currently `llama-3.1-8b-instant`) and is only invoked if real research is required. This drastically reduces latency and API costs for trivial queries.
+* **Reasoning:** `router.py` uses a cheap, fast model (`groq/compound-mini`, hardcoded) to determine if a query is `is_casual` and to detect the user's `tone`. If it's a casual greeting ("hello"), it bypasses the entire pipeline and returns instantly. `planner.py` uses `GROQ_MODEL` from `core/config.py` (currently `openai/gpt-oss-20b`) and is only invoked if real research is required. This drastically reduces latency and API costs for trivial queries.
 
 ### 7. Human-in-the-Loop Placement
 * **Decision:** The graph is configured with `interrupt_before=["reporter"]` (`core/graph.py`).
 * **Reasoning:** We pause execution exactly after the Critic is satisfied (or max iterations are reached), but *before* the Reporter generates the final output. This is the optimal checkpoint: the user can review the raw `research_results` and the Critic's `score_breakdown` via the API, and decide whether to approve it or abandon it *before* we spend tokens on the heavy report generation prompt.
+
+### 8. Known Issue - Fixed: Critic Failure-Path
+* **Issue:** When the Critic agent's LLM call failed or timed out, it did not properly penalize the pipeline confidence, potentially allowing unvalidated research to proceed.
+* **Fix:** `agents/critic.py` was updated so that on an exception or `asyncio.TimeoutError`, `state["confidence_score"]` is explicitly forced to `0.0` (rather than defaulting high or leaving a stale state).
+* **Consequence:** This ensures downstream safeguards in `agents/reporter.py` correctly identify the failure and apply strict-grounding or fallbacks.
+
+## Debugging Case Study: The Hallucination Progression
+
+We tracked a pervasive hallucination bug where the Reporter LLM would confidently invent facts when upstream research failed. Here is the concrete progression of how it was addressed:
+
+1. **Terabox (Failed, Hallucinated):** The pipeline encountered an external API error during research or critique. The error was caught, but the pipeline fell back silently, passing empty research results to the Reporter. The Reporter, unrestrained, hallucinated an entire report on the query based purely on its training data.
+2. **Zorbex (Still Hallucinated due to Critic Bug):** Safeguards were added, but a bug in `agents/critic.py` meant that when the LLM scoring call timed out or failed, it didn't zero out the `confidence_score`. The Reporter saw a "confident" state despite zero actual research, and still generated hallucinated output.
+3. **Velunex (Fixed, Honest Output):** The Critic failure path was fixed to explicitly set `confidence_score = 0.0` on LLM failure. Furthermore, the Reporter was given a strict three-tier safeguard. If research data is empty, it returns `_no_research_fallback` (skipping the LLM call entirely). Now, API failures gracefully degrade into an honest "limited research available" response instead of fabricated facts.

@@ -24,9 +24,8 @@ else:
 
 # Groq token pricing (approximate, per 1M tokens, USD)
 _GROQ_PRICING = {
-    "llama-3.3-70b-versatile": {"input": 0.59, "output": 0.79},
-    "llama-3.1-8b-instant":    {"input": 0.05, "output": 0.08},
-    "llama3-groq-8b-8192-tool-use-preview": {"input": 0.19, "output": 0.19},
+    "openai/gpt-oss-20b": {"input": 0.59, "output": 0.79},
+    "groq/compound-mini": {"input": 0.05, "output": 0.08},
 }
 _TAVILY_COST_PER_CALL = 0.001  # ~$0.001 per Tavily search call
 
@@ -99,7 +98,7 @@ class MetricsCollector:
         self.current_request.estimated_usd += num_calls * _TAVILY_COST_PER_CALL
 
     def record_embedding_call(self, num_texts: int = 1):
-        """Record Gemini embedding call(s)."""
+        """Record local SentenceTransformers embedding call(s)."""
         if self.current_request is None:
             return
         self.current_request.embedding_calls += num_texts

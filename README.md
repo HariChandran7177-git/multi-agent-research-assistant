@@ -14,7 +14,7 @@
   ![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white)
   ![LangGraph](https://img.shields.io/badge/LangGraph-Orchestration-6B46C1?style=for-the-badge&logo=chainlink&logoColor=white)
   ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-  ![Groq](https://img.shields.io/badge/LLM-Groq%20%7C%20Llama%203.3-orange?style=for-the-badge&logo=meta&logoColor=white)
+  ![Groq](https://img.shields.io/badge/LLM-openai%2Fgpt--oss--20b-orange?style=for-the-badge&logo=meta&logoColor=white)
   ![Qdrant](https://img.shields.io/badge/VectorDB-Qdrant-DC143C?style=for-the-badge)
   ![CI](https://img.shields.io/github/actions/workflow/status/HariChandran7177/multi-agent-research-assistant/ci.yml?style=for-the-badge&label=CI)
 
@@ -22,7 +22,7 @@
 
   🔗 **[Live Demo →](https://multi-agent-research-assistant.onrender.com)**
 
-  [**📖 How It Works**](#️-architecture--workflow) · [**🚀 Quickstart**](#-quickstart) · [**💡 Features**](#-features) · [**📄 Sample Output**](#-sample-output) · [**🤝 Contributing**](CONTRIBUTING.md)
+  [**📖 How It Works**](#️-architecture--workflow) · [**🚀 Quickstart**](#-quickstart) · [**💡 Features**](#-features) · [**📄 Sample Output**](#-sample-output) · [**🤝 Contributing**](docs/CONTRIBUTING.md)
 
 </div>
 
@@ -45,11 +45,11 @@
   </tr>
   <tr>
     <td>🧠 <strong>Semantic RAG</strong></td>
-    <td>Embeds all results with Google Gemini (3072-dim) and retrieves only the most relevant chunks via Qdrant — no bloated prompts.</td>
+    <td>Embeds all results with local SentenceTransformers (<code>all-MiniLM-L6-v2</code>, 384-dim) and retrieves only the most relevant chunks via Qdrant — no bloated prompts and zero API embedding costs.</td>
   </tr>
   <tr>
     <td>🔁 <strong>Self-Correcting Loop</strong></td>
-    <td>A Critic agent scores research quality using a <strong>hybrid score</strong> (7% LLM + 93% objective signals). If confidence is low, it loops back for another research pass — automatically.</td>
+    <td>A Critic agent scores research quality using a <strong>hybrid score</strong> (7% LLM + 93% objective signals). If confidence is below <strong>0.8</strong>, it loops back for another research pass — automatically.</td>
   </tr>
   <tr>
     <td>🎭 <strong>Dynamic Tone</strong></td>
@@ -71,10 +71,6 @@
     <td>⏸️ <strong>Human-in-the-Loop (HitL)</strong></td>
     <td>Execution pauses gracefully before the final report is generated, allowing the user to approve or redirect the research via the frontend or API. Powered by LangGraph's <code>AsyncSqliteSaver</code> checkpointer.</td>
   </tr>
-  <tr>
-    <td>🔌 <strong>Model Context Protocol (MCP)</strong></td>
-    <td>Ready for deeper integrations to give agents access to local files and external developer tools.</td>
-  </tr>
 </table>
 
 ---
@@ -86,7 +82,7 @@ During development and load testing, we discovered and resolved several critical
 1. **Qdrant Connection Isolation:** The Qdrant client was being instantiated per-request rather than globally. This caused file descriptor leaks and connection timeouts. We moved to a global singleton with startup verification.
 2. **Silent Fallback Logic:** The fallback `plain_llm` model was silently overriding genuine network errors, making it look like the multi-agent pipeline succeeded when it actually failed. We exposed clear error states.
 3. **Per-Request Graph Rebuild:** LangGraph's `StateGraph` was being recompiled on every single request. Compiling the graph is expensive; we now compile it once at startup and reuse the instance.
-4. **Gemini Rate-Limiting:** The retriever's embedding process was hitting Google Gemini API rate limits (`429 Too Many Requests`) due to concurrent embedding calls. We implemented a batching mechanism with `Tenacity` exponential backoff.
+4. **API Rate-Limiting & Costs:** Initial external API calls were hitting rate limits (`429 Too Many Requests`). We implemented a batching mechanism with `Tenacity` exponential backoff, and completely migrated off Gemini for embeddings to a local `SentenceTransformer` to remove embedding API quota limits entirely.
 
 ## 🏗️ Architecture & Workflow
 
@@ -99,7 +95,7 @@ flowchart TD
         B -- is_casual = true --> Z1([⚡ Instant Answer\nno API waste])
         B -- Requires Research --> C[📋 Planner\nBreaks into 4-5 sub-tasks]
         C --> D[🔍 Researcher\nParallel Tavily Web Search]
-        D --> E[🗄️ Retriever\nEmbed → Qdrant → Top-K Recall]
+        D --> E[🗄️ Retriever\nLocal Embed → Qdrant → Top-K Recall]
         E --> F[🧐 Critic\nHybrid Score: 7% LLM + 93% Objective]
         F -- score < 0.8 AND iterations < 3 --> D
         F -- score ≥ 0.8 OR max iterations --> G[📝 Reporter\nTone-Aware Markdown Report]
@@ -114,12 +110,11 @@ flowchart TD
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| **Orchestration** | [LangGraph](https://github.com/langchain-ai/langgraph) | Stateful agent graph with conditional edges |
-| **LLM Engine** | [Groq](https://groq.com) · `llama-3.3-70b-versatile` | Reporter and Doubt agent (heavier model for final output) |
+| **Orchestration** | [LangGraph](https://github.com/langchain-ai/langgraph) | Stateful agent graph with conditional edges and checkpointing (`AsyncSqliteSaver`) |
+| **LLM Engine** | [Groq](https://groq.com) · `openai/gpt-oss-20b` | Main models for Reporter, Doubt, Planner, Researcher and Critic agents |
 | **Router LLM** | [Groq](https://groq.com) · `groq/compound-mini` | Lightweight, fast routing decisions |
-| **Planner / Researcher / Critic LLM** | [Groq](https://groq.com) · `llama-3.1-8b-instant` | Fast inference for planning, research, and evaluation |
 | **Web Search** | [Tavily API](https://tavily.com) (Advanced Depth) | Real-time web research |
-| **Embeddings** | [Google Gemini](https://ai.google.dev) · `gemini-embedding-001` | 3072-dimensional semantic vectors |
+| **Embeddings** | SentenceTransformers · `all-MiniLM-L6-v2` | 384-dimensional local semantic vectors |
 | **Vector Database** | [Qdrant Cloud](https://qdrant.tech) | Cosine-similarity retrieval with session filtering |
 | **Retry Logic** | [Tenacity](https://tenacity.readthedocs.io) | Exponential backoff on all external calls |
 | **Concurrency** | Python `ThreadPoolExecutor` | Parallel research sub-tasks |
@@ -132,7 +127,7 @@ flowchart TD
 <summary><strong>🖥️ Click to expand — "AWS vs GCP for Startups in 2025?"</strong></summary>
 
 > **Query:** `"Should a startup build on AWS vs GCP in 2025? Explain the tradeoffs like a senior engineer would."`
-> **Tone detected:** `professional and technical` | **Iterations:** 2 | **Confidence:** `0.84`
+> **Tone detected:** `senior software engineer — precise, technical, no hand-holding` | **Iterations:** 2 | **Confidence:** `0.84`
 
 ---
 
@@ -167,7 +162,6 @@ The honest answer? **It depends on your workload** — but the decision is far l
 - Free API accounts (all have generous free tiers):
   - [Groq](https://console.groq.com) — LLM inference
   - [Tavily](https://app.tavily.com) — Web search
-  - [Google AI Studio](https://aistudio.google.com) — Embeddings
   - [Qdrant Cloud](https://cloud.qdrant.io) — Vector database (or runs in-memory)
 
 ### Installation
@@ -194,7 +188,6 @@ cp .env.example .env
 ```env
 GROQ_API_KEY=your_groq_key          # https://console.groq.com
 TAVILY_API_KEY=your_tavily_key      # https://app.tavily.com
-GOOGLE_API_KEY=your_google_key      # https://aistudio.google.com
 QDRANT_URL=your_qdrant_url          # https://cloud.qdrant.io (or leave as localhost)
 QDRANT_API_KEY=your_qdrant_key
 ```
@@ -234,11 +227,11 @@ multi-agent-research-assistant/
 │   ├── router.py        # 🔀 Gatekeeper: casual vs research, tone detection
 │   ├── planner.py       # 📋 Breaks complex queries into 4-5 research sub-tasks
 │   ├── researcher.py    # 🔍 Parallel Tavily web search (ThreadPoolExecutor)
-│   ├── retriever.py     # 🗄️ Gemini embeddings + Qdrant vector retrieval
+│   ├── retriever.py     # 🗄️ Local Embeddings + Qdrant vector retrieval
 │   ├── critic.py        # 🧐 Hybrid quality scorer (LLM + objective signals)
-│   └── reporter.py      # 📝 Tone-aware markdown report writer
+│   └── reporter.py      # 📝 Tone-aware markdown report writer (w/ strict grounding)
 ├── core/
-│   ├── graph.py         # LangGraph nodes, edges & conditional routing
+│   ├── graph.py         # LangGraph nodes, edges & conditional routing (AsyncSqliteSaver)
 │   ├── state.py         # ResearchState TypedDict — shared agent memory
 │   ├── scorer.py        # Objective scoring signals (Qdrant, length, sources)
 │   └── logger.py        # Structured console logging
@@ -276,7 +269,7 @@ Tests are designed to mock all external APIs (Groq, Tavily, Qdrant) — no real 
 - [x] **FastAPI + SSE streaming** — Real-time agent progress streamed to the browser
 - [x] **Web UI** — Live frontend with per-agent status cards and confidence meters
 - [x] **Production hardening** — Qdrant startup check, single graph compilation, longer retry backoff
-- [x] **Human-in-the-loop** — Pause the loop and let the user steer research direction via `MemorySaver` checkpointer.
+- [x] **Human-in-the-loop** — Pause the loop and let the user steer research direction via `AsyncSqliteSaver` checkpointer.
 - [x] **Caching mechanism** — Query caching to bypass API calls on repeated questions.
 - [x] **Doubt resolution** — Grounded follow-up answers on generated reports.
 

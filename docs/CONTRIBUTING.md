@@ -6,7 +6,6 @@
 3. Copy `.env.example` to `.env` and fill in the required keys:
    - `GROQ_API_KEY`: Groq for LLM routing and reasoning
    - `TAVILY_API_KEY`: Tavily for web search
-   - `GOOGLE_API_KEY`: Gemini for vector embeddings
    - `QDRANT_URL` / `QDRANT_API_KEY`: Qdrant Cloud for semantic retrieval
 
 ## Running Tests

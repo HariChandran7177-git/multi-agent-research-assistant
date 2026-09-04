@@ -32,8 +32,6 @@ AGENT_TIMEOUT = int(os.getenv("AGENT_TIMEOUT", "120"))
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
-# Google API settings
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Logging level
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

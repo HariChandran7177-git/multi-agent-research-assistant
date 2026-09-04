@@ -8,7 +8,7 @@ from typing import Dict, Any
 from core.logger import get_logger
 from core.config import (
     GROQ_API_KEY, QDRANT_URL, QDRANT_API_KEY,
-    GOOGLE_API_KEY, TAVILY_MAX_RESULTS
+    TAVILY_MAX_RESULTS
 )
 
 logger = get_logger(__name__)
@@ -22,7 +22,7 @@ class HealthChecker:
             "redis": {"status": "unknown", "latency_ms": None},
             "groq": {"status": "unknown", "latency_ms": None},
             "qdrant": {"status": "unknown", "latency_ms": None},
-            "gemini": {"status": "unknown", "latency_ms": None},
+
             "tavily": {"status": "unknown", "latency_ms": None},
         }
 
@@ -83,29 +83,6 @@ class HealthChecker:
             self.services["qdrant"] = {"status": "degraded", "error": str(e)}
             return {"status": "degraded", "error": str(e)}
 
-    async def check_gemini(self) -> Dict[str, Any]:
-        """Check Gemini embeddings availability."""
-        start = time.perf_counter()
-        try:
-            if not GOOGLE_API_KEY:
-                return {"status": "no_config", "error": "GOOGLE_API_KEY not set"}
-
-            from langchain_google_genai import GoogleGenerativeAIEmbeddings
-            embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/gemini-embedding-001",
-                google_api_key=GOOGLE_API_KEY
-            )
-            future = asyncio.get_event_loop().run_in_executor(
-                None, embeddings.embed_query, "test"
-            )
-            await asyncio.wait_for(future, timeout=15)
-            latency = (time.perf_counter() - start) * 1000
-            self.services["gemini"] = {"status": "healthy", "latency_ms": round(latency, 2)}
-            return {"status": "healthy", "latency_ms": round(latency, 2)}
-        except Exception as e:
-            self.services["gemini"] = {"status": "degraded", "error": str(e)}
-            return {"status": "degraded", "error": str(e)}
-
     async def check_tavily(self) -> Dict[str, Any]:
         """Check Tavily API availability."""
         start = time.perf_counter()
@@ -134,7 +111,7 @@ class HealthChecker:
         results["redis"] = await self.check_redis()
         results["groq"] = await self.check_groq()
         results["qdrant"] = await self.check_qdrant()
-        results["gemini"] = await self.check_gemini()
+
         results["tavily"] = await self.check_tavily()
 
         overall = all(s["status"] == "healthy" for s in results.values())

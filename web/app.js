@@ -728,7 +728,7 @@ async function runDemoMode(query) {
     { agent: 'router',     icon: '🔀', label: 'Router',     message: 'Analyzing query intent & detecting tone...', delay: 1200, result: { tone: 'professional and technical', is_casual: false } },
     { agent: 'planner',    icon: '📋', label: 'Planner',    message: 'Breaking into 4 targeted research sub-tasks...', delay: 1400, result: { plan: ['Market share analysis', 'Feature comparison', 'Cost model analysis', 'Startup ecosystem review'] } },
     { agent: 'researcher', icon: '⚡', label: 'Researcher', message: 'Parallel Tavily web search — pass 1 (ThreadPoolExecutor)...', delay: 2000, result: { sources_found: 12 } },
-    { agent: 'retriever',  icon: '🧠', label: 'Retriever',  message: 'Gemini embedding (3072-dim) → Qdrant cosine retrieval...', delay: 1600, result: { docs_retrieved: 8 } },
+    { agent: 'retriever',  icon: '🧠', label: 'Retriever',  message: 'Local embedding (384-dim) → Qdrant cosine retrieval...', delay: 1600, result: { docs_retrieved: 8 } },
     { agent: 'critic',     icon: '🧐', label: 'Critic',     message: 'Hybrid scoring: 60% LLM + 40% objective signals...', delay: 1800, result: { confidence: 0.67, passed: false, critique: 'Missing financial metrics and cost benchmarks. Looping for deeper research.' } },
     { agent: 'researcher', icon: '⚡', label: 'Researcher', message: 'Parallel web search — pass 2 (deeper research pass)...', delay: 1800, result: { sources_found: 9 } },
     { agent: 'retriever',  icon: '🧠', label: 'Retriever',  message: 'Re-embedding and retrieving enriched context...', delay: 1400, result: { docs_retrieved: 11 } },
