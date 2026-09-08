@@ -1,4 +1,3 @@
-from sentence_transformers import SentenceTransformer
 import os
 import asyncio
 import uuid
@@ -16,24 +15,46 @@ from core.config import MAX_ITERATIONS, AGENT_TIMEOUT, GROQ_MODEL, GROQ_API_KEY
 from langchain_groq import ChatGroq
 
 load_dotenv()
-
 logger = get_logger(__name__)
 
+_embed_model = None
 
-_embed_model = SentenceTransformer('all-MiniLM-L6-v2')  # loaded once at import
+
+def get_embeddings():
+    """Get embedding engine — uses Google API embeddings if key present, else lazy-loads SentenceTransformer."""
+    global _embed_model
+    google_key = os.getenv("GOOGLE_API_KEY")
+    if google_key:
+        try:
+            return GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=google_key)
+        except Exception as e:
+            logger.warning(f"Google embeddings init failed ({e}), falling back to local model")
+
+    if _embed_model is None:
+        logger.info("Lazy-loading SentenceTransformer('all-MiniLM-L6-v2')...")
+        from sentence_transformers import SentenceTransformer
+        _embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    class LocalEmbeddings:
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            return _embed_model.encode(texts, convert_to_numpy=True).tolist()
+
+        def embed_query(self, text: str) -> list[float]:
+            return _embed_model.encode(text, convert_to_numpy=True).tolist()
+
+    return LocalEmbeddings()
 
 
-class LocalEmbeddings:
-    """Drop-in replacement matching the langchain embeddings interface used below."""
-
+class LazyEmbeddingsWrapper:
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return _embed_model.encode(texts, convert_to_numpy=True).tolist()
+        return get_embeddings().embed_documents(texts)
 
     def embed_query(self, text: str) -> list[float]:
-        return _embed_model.encode(text, convert_to_numpy=True).tolist()
+        return get_embeddings().embed_query(text)
 
 
-embeddings = LocalEmbeddings()
+embeddings = LazyEmbeddingsWrapper()
+
 
 
 def get_qdrant_client():
