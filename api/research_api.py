@@ -46,19 +46,20 @@ def validate_environment() -> list[str]:
 
 
 def check_environment():
-    """Validate environment at startup. Exit if any vars are missing."""
+    """Validate environment at startup. Log warning if any vars are missing."""
     missing = validate_environment()
     if missing:
         print("=" * 60)
-        print("CRITICAL: Missing required environment variables")
+        print("WARNING: Missing required environment variables")
         print("=" * 60)
         print("The following environment variables are not set:")
         for var in missing:
             print(f"  - {var}")
         print()
-        print("Please set them and restart the server.")
+        print("API calls requiring these keys will fall back or return errors.")
+        print("Please set them in your environment / Render Dashboard.")
         print("=" * 60)
-        sys.exit(1)
+
 
 
 # ── Rate Limiting Setup (slowapi) ─────────────────────────────────────────────
