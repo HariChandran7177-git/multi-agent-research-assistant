@@ -11,18 +11,19 @@
   <br/>
 
   <!-- Badges -->
-  ![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white)
-  ![LangGraph](https://img.shields.io/badge/LangGraph-Orchestration-6B46C1?style=for-the-badge&logo=chainlink&logoColor=white)
-  ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-  ![Groq](https://img.shields.io/badge/LLM-openai%2Fgpt--oss--20b-orange?style=for-the-badge&logo=meta&logoColor=white)
-  ![Qdrant](https://img.shields.io/badge/VectorDB-Qdrant-DC143C?style=for-the-badge)
-  ![CI](https://img.shields.io/github/actions/workflow/status/HariChandran7177/multi-agent-research-assistant/ci.yml?style=for-the-badge&label=CI)
 
-  <br/><br/>
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-Orchestration-6B46C1?style=for-the-badge&logo=chainlink&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+![Groq](https://img.shields.io/badge/LLM-openai%2Fgpt--oss--20b-orange?style=for-the-badge&logo=meta&logoColor=white)
+![Qdrant](https://img.shields.io/badge/VectorDB-Qdrant-DC143C?style=for-the-badge)
+![CI](https://img.shields.io/github/actions/workflow/status/HariChandran7177/multi-agent-research-assistant/ci.yml?style=for-the-badge&label=CI)
 
-  🔗 **[Live Demo →](https://multi-agent-research-assistant.onrender.com)**
+<br/><br/>
 
-  [**📖 How It Works**](#️-architecture--workflow) · [**🚀 Quickstart**](#-quickstart) · [**💡 Features**](#-features) · [**📄 Sample Output**](#-sample-output) · [**🤝 Contributing**](docs/CONTRIBUTING.md)
+🔗 **[Live Demo →](https://multi-agent-research-assistant.onrender.com)**
+
+[**📖 How It Works**](#️-architecture--workflow) · [**🚀 Quickstart**](#-quickstart) · [**💡 Features**](#-features) · [**📄 Sample Output**](#-sample-output) · [**🤝 Contributing**](docs/CONTRIBUTING.md)
 
 </div>
 
@@ -71,6 +72,10 @@
     <td>⏸️ <strong>Human-in-the-Loop (HitL)</strong></td>
     <td>Execution pauses gracefully before the final report is generated, allowing the user to approve or redirect the research via the frontend or API. Powered by LangGraph's <code>AsyncSqliteSaver</code> checkpointer.</td>
   </tr>
+  <tr>
+    <td>🔌 <strong>Model Context Protocol (MCP)</strong></td>
+    <td>Ready for deeper integrations to give agents access to local files and external developer tools.</td>
+  </tr>
 </table>
 
 ---
@@ -108,16 +113,16 @@ flowchart TD
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| **Orchestration** | [LangGraph](https://github.com/langchain-ai/langgraph) | Stateful agent graph with conditional edges and checkpointing (`AsyncSqliteSaver`) |
-| **LLM Engine** | [Groq](https://groq.com) · `openai/gpt-oss-20b` | Main models for Reporter, Doubt, Planner, Researcher and Critic agents |
-| **Router LLM** | [Groq](https://groq.com) · `groq/compound-mini` | Lightweight, fast routing decisions |
-| **Web Search** | [Tavily API](https://tavily.com) (Advanced Depth) | Real-time web research |
-| **Embeddings** | SentenceTransformers · `all-MiniLM-L6-v2` | 384-dimensional local semantic vectors |
-| **Vector Database** | [Qdrant Cloud](https://qdrant.tech) | Cosine-similarity retrieval with session filtering |
-| **Retry Logic** | [Tenacity](https://tenacity.readthedocs.io) | Exponential backoff on all external calls |
-| **Concurrency** | Python `ThreadPoolExecutor` | Parallel research sub-tasks |
+| Layer               | Technology                                             | Purpose                                                                            |
+| ------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| **Orchestration**   | [LangGraph](https://github.com/langchain-ai/langgraph) | Stateful agent graph with conditional edges and checkpointing (`AsyncSqliteSaver`) |
+| **LLM Engine**      | [Groq](https://groq.com) · `openai/gpt-oss-20b`        | Main models for Reporter, Doubt, Planner, Researcher and Critic agents             |
+| **Router LLM**      | [Groq](https://groq.com) · `groq/compound-mini`        | Lightweight, fast routing decisions                                                |
+| **Web Search**      | [Tavily API](https://tavily.com) (Advanced Depth)      | Real-time web research                                                             |
+| **Embeddings**      | SentenceTransformers · `all-MiniLM-L6-v2`              | 384-dimensional local semantic vectors                                             |
+| **Vector Database** | [Qdrant Cloud](https://qdrant.tech)                    | Cosine-similarity retrieval with session filtering                                 |
+| **Retry Logic**     | [Tenacity](https://tenacity.readthedocs.io)            | Exponential backoff on all external calls                                          |
+| **Concurrency**     | Python `ThreadPoolExecutor`                            | Parallel research sub-tasks                                                        |
 
 ---
 
@@ -135,19 +140,19 @@ flowchart TD
 
 The honest answer? **It depends on your workload** — but the decision is far less symmetric than AWS's market dominance implies.
 
-| Criteria | AWS | GCP |
-|---|---|---|
-| Market share | ✅ 31% dominant | ❌ 12% |
-| ML/AI native tooling | SageMaker (verbose) | ✅ Vertex AI + TPUs |
-| Managed Kubernetes | EKS (complex) | ✅ GKE (superior) |
-| Data warehouse | Redshift | ✅ BigQuery (serverless) |
-| Startup credits | $5K–$100K | $200K |
-| Networking cost | Expensive egress | ✅ Cheaper |
+| Criteria             | AWS                 | GCP                      |
+| -------------------- | ------------------- | ------------------------ |
+| Market share         | ✅ 31% dominant     | ❌ 12%                   |
+| ML/AI native tooling | SageMaker (verbose) | ✅ Vertex AI + TPUs      |
+| Managed Kubernetes   | EKS (complex)       | ✅ GKE (superior)        |
+| Data warehouse       | Redshift            | ✅ BigQuery (serverless) |
+| Startup credits      | $5K–$100K           | $200K                    |
+| Networking cost      | Expensive egress    | ✅ Cheaper               |
 
 **Choose AWS** → General SaaS, compliance-heavy industries, large hiring pool.
 **Choose GCP** → ML-core products, data pipelines, Kubernetes-heavy architectures.
 
-> *The senior engineer's take: AWS is the safe default. GCP is the smart choice if data or ML is core to your product.*
+> _The senior engineer's take: AWS is the safe default. GCP is the smart choice if data or ML is core to your product._
 
 📄 [Read the full report →](sample_outputs/aws_vs_gcp_report.md)
 
@@ -158,6 +163,7 @@ The honest answer? **It depends on your workload** — but the decision is far l
 ## 🚀 Quickstart
 
 ### Prerequisites
+
 - Python 3.11+
 - Free API accounts (all have generous free tiers):
   - [Groq](https://console.groq.com) — LLM inference
@@ -185,6 +191,7 @@ cp .env.example .env
 ```
 
 ### Configure `.env`
+
 ```env
 GROQ_API_KEY=your_groq_key          # https://console.groq.com
 TAVILY_API_KEY=your_tavily_key      # https://app.tavily.com
@@ -204,6 +211,7 @@ python main.py "Write a professional brief on the current state of AI regulation
 ```
 
 **Expected output (in ~30–60 seconds):**
+
 ```
 Researching: What are the key tradeoffs of microservices vs monolith?
 
@@ -266,6 +274,7 @@ Tests are designed to mock all external APIs (Groq, Tavily, Qdrant) — no real 
 ## 🔮 Roadmap & Completed Milestones
 
 ### Completed
+
 - [x] **FastAPI + SSE streaming** — Real-time agent progress streamed to the browser
 - [x] **Web UI** — Live frontend with per-agent status cards and confidence meters
 - [x] **Production hardening** — Qdrant startup check, single graph compilation, longer retry backoff
@@ -274,6 +283,7 @@ Tests are designed to mock all external APIs (Groq, Tavily, Qdrant) — no real 
 - [x] **Doubt resolution** — Grounded follow-up answers on generated reports.
 
 ### Future Work
+
 - [ ] **LangSmith tracing** — Full observability into every agent step
 - [ ] **OpenAI / Anthropic support** — Swap LLM backends via config
 - [ ] **Export to PDF** — One-click export of final reports
@@ -299,6 +309,6 @@ This project is licensed under the [MIT License](LICENSE).
 ---
 
 <div align="center">
-  <p>Built with ❤️ by <a href="https://github.com/HariChandran7177">Grandhi Hari Chandra</a></p>
+  <p>Built with ❤️ by <a href="https://github.com/HariChandran7177">Grandhi Hari Chandran</a></p>
   <p>If this project helped you, please consider giving it a ⭐</p>
 </div>

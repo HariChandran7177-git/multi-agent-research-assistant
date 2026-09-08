@@ -1,0 +1,25 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Version control
+.git/
+.gitignore
+
+# Cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Databases and local state
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+fallback_errors.log
+
+# IDE and environment files
+.env
+.devcontainer/
+.vscode/
