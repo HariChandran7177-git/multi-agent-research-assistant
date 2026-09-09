@@ -516,10 +516,10 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
 
 @app.post("/research/stream")
 @limiter.limit("5 per minute")
-async def research_stream(request: ResearchRequest, req: Request):
+async def research_stream(payload: ResearchRequest, request: Request):
     """SSE endpoint — streams agent events as they happen."""
     return StreamingResponse(
-        stream_pipeline(request.query, request.user_id),
+        stream_pipeline(payload.query, payload.user_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -531,12 +531,12 @@ async def research_stream(request: ResearchRequest, req: Request):
 
 @app.post("/research")
 @limiter.limit("5 per minute")
-async def research_sync(request: ResearchRequest, req: Request):
+async def research_sync(payload: ResearchRequest, request: Request):
     """Synchronous fallback — waits for full pipeline then returns."""
-    cache_key = get_cache_key(request.query)
+    cache_key = get_cache_key(payload.query)
     cached = cache_manager.get(cache_key)
     if cached:
-        logger.info(f"Cache hit for query: {request.query}")
+        logger.info(f"Cache hit for query: {payload.query}")
         return {
             "report": cached.get("report", ""),
             "confidence": cached.get("confidence", 0.0),
@@ -550,8 +550,8 @@ async def research_sync(request: ResearchRequest, req: Request):
 
         thread_id = str(uuid.uuid4())
         initial_state: ResearchState = {
-            "query": request.query,
-            "user_id": request.user_id,
+            "query": payload.query,
+            "user_id": payload.user_id,
             "plan": [],
             "research_results": [],
             "retrieved_docs": [],
@@ -577,7 +577,7 @@ async def research_sync(request: ResearchRequest, req: Request):
             "tone": final_state.get("tone", "professional"),
         }
         if cache_manager.enabled:
-            await cache_manager.set(request.query, complete_payload)
+            await cache_manager.set(payload.query, complete_payload)
         return complete_payload
     except Exception as e:
         return {"error": str(e), "report": "Pipeline failed. Check your API keys."}
@@ -717,13 +717,13 @@ class MultiLangRequest(BaseModel):
 
 @app.post("/research/multilang/stream")
 @limiter.limit("5 per minute")
-async def research_multilang_stream(request: MultiLangRequest, req: Request):
+async def research_multilang_stream(payload: MultiLangRequest, request: Request):
     """
     Multilingual research: detects query language (or uses 'language' param),
     runs the full pipeline, and instructs the reporter to respond in that language.
     """
-    lang = request.language
-    query = request.query
+    lang = payload.language
+    query = payload.query
 
     # Build language-prefixed query so the reporter knows the target language
     if lang == "auto":
@@ -741,7 +741,7 @@ async def research_multilang_stream(request: MultiLangRequest, req: Request):
         lang_note = f"Respond entirely in {lang_name}."
 
     # Inject language note into user_id so reporter can see it via state (simple hack)
-    augmented_user_id = f"{request.user_id}|lang:{lang}"
+    augmented_user_id = f"{payload.user_id}|lang:{lang}"
 
     return StreamingResponse(
         stream_pipeline(prefixed_query, augmented_user_id),
