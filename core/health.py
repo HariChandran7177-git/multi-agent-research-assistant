@@ -93,9 +93,10 @@ class HealthChecker:
                 return {"status": "no_config", "error": "TAVILY_API_KEY not set"}
 
             from tavily import TavilyClient
+            import functools
             client = TavilyClient(api_key=api_key)
             future = asyncio.get_event_loop().run_in_executor(
-                None, client.search, "test", 1
+                None, functools.partial(client.search, query="test", max_results=1)
             )
             await asyncio.wait_for(future, timeout=10)
             latency = (time.perf_counter() - start) * 1000

@@ -4,7 +4,6 @@ import uuid
 from typing import List
 from functools import partial
 from dotenv import load_dotenv
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -21,14 +20,8 @@ _embed_model = None
 
 
 def get_embeddings():
-    """Get embedding engine — uses Google API embeddings if key present, else lazy-loads SentenceTransformer."""
+    """Get embedding engine — locked to SentenceTransformer locally."""
     global _embed_model
-    google_key = os.getenv("GOOGLE_API_KEY")
-    if google_key:
-        try:
-            return GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=google_key)
-        except Exception as e:
-            logger.warning(f"Google embeddings init failed ({e}), falling back to local model")
 
     if _embed_model is None:
         logger.info("Lazy-loading SentenceTransformer('all-MiniLM-L6-v2')...")
