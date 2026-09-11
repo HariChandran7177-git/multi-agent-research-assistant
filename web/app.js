@@ -372,8 +372,18 @@ async function loadArchive() {
       return;
     }
     
+    let reportsToRender = data.reports;
+    if (currentArchiveFilter === 'high') {
+      reportsToRender = reportsToRender.filter(r => r.confidence > 0.75);
+    }
+    
+    if(reportsToRender.length === 0) {
+      grid.innerHTML = '<div class="empty-state">No high confidence runs found.</div>';
+      return;
+    }
+    
     grid.innerHTML = '';
-    data.reports.forEach(r => {
+    reportsToRender.forEach(r => {
       const color = r.confidence > 0.75 ? '#7DD3A8' : r.confidence > 0.5 ? '#FBBF6B' : '#E38080';
       const dash = 100.5 * r.confidence;
       const card = document.createElement('div');
@@ -409,6 +419,23 @@ async function loadArchive() {
 }
 
 // init
+let currentArchiveFilter = 'all';
+
+async function filterArchive(filterType, element) {
+  currentArchiveFilter = filterType;
+  document.querySelectorAll('.archive-controls .chip').forEach(c => c.classList.remove('active'));
+  element.classList.add('active');
+  await loadArchive();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const chips = document.querySelectorAll('.archive-controls .chip');
+  if(chips.length >= 2) {
+    chips[0].onclick = (e) => filterArchive('all', e.target);
+    chips[1].onclick = (e) => filterArchive('high', e.target);
+  }
+});
+
 setTimeout(() => loadArchive(), 500);
 
 document.getElementById('queryInput').addEventListener('keydown', e => {
