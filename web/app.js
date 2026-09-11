@@ -145,6 +145,7 @@ let eventSource = null;
 let currentThreadId = null;
 let _streamBuffer = '';
 let isPipelineRunning = false;
+let currentAbortController = null;
 
 function fillQuery(el) { 
   document.getElementById('queryInput').value = el.textContent; 
@@ -152,12 +153,16 @@ function fillQuery(el) {
 }
 
 async function startRealPipeline() {
-  if (isPipelineRunning) return;
+  if (isPipelineRunning) {
+    if (currentAbortController) currentAbortController.abort();
+    await new Promise(r => setTimeout(r, 100)); // wait for cleanup
+  }
   
   const query = document.getElementById('queryInput').value.trim();
   if (!query) { showToast('Please enter a query', 'error'); return; }
 
   isPipelineRunning = true;
+  currentAbortController = new AbortController();
   document.getElementById('run-btn').disabled = true;
   document.getElementById('status-ring').style.animationPlayState = 'running';
   document.getElementById('run-status').textContent = 'RESEARCHING...';
@@ -169,7 +174,8 @@ async function startRealPipeline() {
 
   try {
     const res = await fetch(`${API_BASE}/research/stream`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      signal: currentAbortController.signal
     });
 
     if (!res.ok) {
@@ -198,14 +204,17 @@ async function startRealPipeline() {
       }
     }
   } catch (err) {
+    if (err.name === 'AbortError') return;
     showToast(err.message, 'error');
     document.getElementById('run-status').textContent = 'ERROR / ABORTED';
   } finally {
-    isPipelineRunning = false;
-    document.getElementById('run-btn').disabled = false;
-    document.getElementById('status-ring').style.animationPlayState = 'paused';
-    if(document.getElementById('run-status').textContent === 'RESEARCHING...') {
-      document.getElementById('run-status').textContent = 'IDLE';
+    if (currentAbortController && !currentAbortController.signal.aborted) {
+      isPipelineRunning = false;
+      document.getElementById('run-btn').disabled = false;
+      document.getElementById('status-ring').style.animationPlayState = 'paused';
+      if(document.getElementById('run-status').textContent === 'RESEARCHING...') {
+        document.getElementById('run-status').textContent = 'IDLE';
+      }
     }
   }
 }
