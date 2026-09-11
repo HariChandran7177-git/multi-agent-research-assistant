@@ -162,6 +162,7 @@ async function startRealPipeline() {
   document.getElementById('run-status').textContent = 'RESEARCHING...';
   
   resetPipeline();
+  document.getElementById('pipeline-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
   
   const payload = { query: query, user_id: 'browser_user' };
 
@@ -295,6 +296,7 @@ async function resumePipeline() {
   if (!currentThreadId) return;
   document.getElementById('resume-btn').style.display = 'none';
   document.getElementById('run-status').textContent = 'RESEARCHING...';
+  document.getElementById('report-viewer-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
   try {
     const res = await fetch(`${API_BASE}/research/resume`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
