@@ -16,29 +16,27 @@ from langchain_groq import ChatGroq
 load_dotenv()
 logger = get_logger(__name__)
 
-_embed_model = None
+# ── Gemini API Embeddings (no PyTorch, no local model, ~0 MB RAM) ─────────────
+# Uses Google's text-embedding-004 (768-dim) via API.
+# Much lighter than SentenceTransformer which requires ~700MB for PyTorch.
+_gemini_embeddings = None
 
 
 def get_embeddings():
-    """Get embedding engine — locked to SentenceTransformer locally."""
-    global _embed_model
-
-    if _embed_model is None:
-        logger.info("Lazy-loading SentenceTransformer('all-MiniLM-L6-v2')...")
-        from sentence_transformers import SentenceTransformer
-        _embed_model = SentenceTransformer('all-MiniLM-L6-v2')
-
-    class LocalEmbeddings:
-        def embed_documents(self, texts: list[str]) -> list[list[float]]:
-            return _embed_model.encode(texts, convert_to_numpy=True).tolist()
-
-        def embed_query(self, text: str) -> list[float]:
-            return _embed_model.encode(text, convert_to_numpy=True).tolist()
-
-    return LocalEmbeddings()
+    """Get Gemini API embedding engine (lazy-init, stateless API calls)."""
+    global _gemini_embeddings
+    if _gemini_embeddings is None:
+        logger.info("Initializing Gemini API embeddings (text-embedding-004, 768-dim)...")
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        _gemini_embeddings = GoogleGenerativeAIEmbeddings(
+            model="text-embedding-004",  # no 'models/' prefix — langchain adds it internally
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
+        )
+    return _gemini_embeddings
 
 
 class LazyEmbeddingsWrapper:
+    """Thin wrapper that lazily initialises the Gemini embedding client."""
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return get_embeddings().embed_documents(texts)
 
@@ -47,6 +45,9 @@ class LazyEmbeddingsWrapper:
 
 
 embeddings = LazyEmbeddingsWrapper()
+
+# Gemini text-embedding-004 outputs 768-dimensional vectors
+EMBEDDING_DIM = 768
 
 
 
@@ -71,16 +72,19 @@ _qdrant_initialized = False
 
 
 def _initialize_qdrant():
-    """Lazily initialize Qdrant client if not already initialized."""
+    """Lazily initialize Qdrant client. Resets on transient errors so subsequent requests retry."""
     global qdrant, _qdrant_initialized
-    if _qdrant_initialized:
+    if _qdrant_initialized and qdrant is not None:
         return qdrant
+    # Allow retry even if previously failed (transient network error on Render cold start)
+    _qdrant_initialized = False
     try:
         qdrant = get_qdrant_client()
         _qdrant_initialized = True
         return qdrant
     except RuntimeError:
-        _qdrant_initialized = True
+        # Do NOT set _qdrant_initialized = True here so we can retry next request
+        qdrant = None
         return None
 
 
@@ -88,34 +92,60 @@ COLLECTION_NAME = "research_docs"
 
 
 def ensure_collection():
-    """Ensure collection exists - returns False if Qdrant is unavailable."""
+    """Ensure collection exists with the correct vector dimension.
+
+    If the existing collection was created with a different vector size (e.g. 384 from the old
+    SentenceTransformer), it will be deleted and recreated with EMBEDDING_DIM (768 for Gemini).
+    Returns False if Qdrant is unavailable.
+    """
     global qdrant
     if qdrant is None:
         return False
     try:
         collections = qdrant.get_collections().collections
-        if COLLECTION_NAME not in [c.name for c in collections]:
-            logger.info(
-                f"Collection '{COLLECTION_NAME}' not found — creating it")
-            qdrant.create_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE)
-            )
-            # Payload index is only needed for remote Qdrant; ignore errors for in-memory client
+        existing_names = [c.name for c in collections]
+
+        if COLLECTION_NAME in existing_names:
+            # Verify the existing collection has the right vector dimension
             try:
-                qdrant.create_payload_index(
-                    collection_name=COLLECTION_NAME,
-                    field_name="session_id",
-                    field_schema="keyword",
-                )
-                qdrant.create_payload_index(
-                    collection_name=COLLECTION_NAME,
-                    field_name="user_id",
-                    field_schema="keyword",
-                )
+                info = qdrant.get_collection(COLLECTION_NAME)
+                existing_dim = info.config.params.vectors.size
+                if existing_dim != EMBEDDING_DIM:
+                    logger.warning(
+                        f"Collection '{COLLECTION_NAME}' has dim={existing_dim} but we need "
+                        f"dim={EMBEDDING_DIM}. Deleting and recreating..."
+                    )
+                    qdrant.delete_collection(COLLECTION_NAME)
+                    # Fall through to create with correct dim
+                else:
+                    return True  # Correct dimension, nothing to do
             except Exception as e:
-                logger.debug(
-                    f"Payload index creation skipped or failed ({e}); may be in-memory client.")
+                logger.warning(f"Could not verify collection dim: {e}. Recreating to be safe.")
+                try:
+                    qdrant.delete_collection(COLLECTION_NAME)
+                except Exception:
+                    pass
+
+        logger.info(f"Collection '{COLLECTION_NAME}' not found — creating it (dim={EMBEDDING_DIM})")
+        qdrant.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE)
+        )
+        # Payload index is only needed for remote Qdrant; ignore errors for in-memory client
+        try:
+            qdrant.create_payload_index(
+                collection_name=COLLECTION_NAME,
+                field_name="session_id",
+                field_schema="keyword",
+            )
+            qdrant.create_payload_index(
+                collection_name=COLLECTION_NAME,
+                field_name="user_id",
+                field_schema="keyword",
+            )
+        except Exception as e:
+            logger.debug(
+                f"Payload index creation skipped or failed ({e}); may be in-memory client.")
         return True
     except Exception as e:
         logger.warning(f"ensure_collection failed: {e}")
@@ -202,7 +232,7 @@ Return ONLY a comma-separated list of the index numbers (e.g., 0, 3, 5, 12). No 
 
 async def retriever_node(state: ResearchState) -> ResearchState:
     """Async retriever node with timeout and metrics."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # Initialize Qdrant
     global qdrant

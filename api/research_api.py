@@ -247,7 +247,7 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
             from agents.researcher import researcher_node
             from agents.retriever import retriever_node
             from agents.critic import critic_node
-            from agents.reporter import reporter_node
+            from agents.reporter import reporter_node, reporter_node_streaming
             from core.config import CONFIDENCE_THRESHOLD, MAX_ITERATIONS, AGENT_TIMEOUT
 
             initial_state: ResearchState = {
@@ -268,9 +268,9 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
             # Start Plain LLM task concurrently
             from langchain_groq import ChatGroq
             from core.config import GROQ_REPORTER_MODEL, GROQ_API_KEY
-            plain_llm = ChatGroq(model=GROQ_REPORTER_MODEL, api_key=GROQ_API_KEY, temperature=0.3)
+            plain_llm = ChatGroq(model=GROQ_REPORTER_MODEL, api_key=GROQ_API_KEY, temperature=0.3, max_tokens=512)
             plain_llm_task = asyncio.create_task(
-                plain_llm.ainvoke(f"Please answer this query directly without using any external tools or web search. Give a concise but complete answer:\n\n{query}")
+                plain_llm.ainvoke(f"Answer this query concisely (2-3 paragraphs max):\n\n{query}")
             )
             plain_llm_sent = False
 
@@ -448,17 +448,39 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
 
             del RESUME_EVENTS[thread_id]
 
-            # Agent 6: Reporter
+            # Agent 6: Reporter (streaming — emits report_chunk SSE events token-by-token)
             yield sse_event("agent_start", {
                 "agent": "reporter", "label": "Reporter", "icon": "📝",
                 "message": "Writing tone-aware research report...", "timestamp": time.time(),
             })
             metrics.start_agent("reporter")
             try:
-                state = await asyncio.wait_for(
-                    reporter_node(state),
-                    timeout=AGENT_TIMEOUT * 2  # Report generation takes longer
+                # Async callback that yields each streamed token as a report_chunk SSE event
+                async def _stream_chunk(chunk_text: str):
+                    yield sse_event("report_chunk", {"chunk": chunk_text, "timestamp": time.time()})
+
+                # Collect yielded events from the callback via an async queue
+                _chunk_queue: asyncio.Queue = asyncio.Queue()
+
+                async def _enqueue_chunk(chunk_text: str):
+                    await _chunk_queue.put(chunk_text)
+
+                # Run streaming reporter; feed chunks into queue concurrently
+                reporter_task = asyncio.create_task(
+                    reporter_node_streaming(state, _enqueue_chunk)
                 )
+
+                # Drain queue while reporter is running, yielding SSE events
+                while not reporter_task.done() or not _chunk_queue.empty():
+                    try:
+                        chunk_text = _chunk_queue.get_nowait()
+                        yield sse_event("report_chunk", {"chunk": chunk_text, "timestamp": time.time()})
+                    except asyncio.QueueEmpty:
+                        await asyncio.sleep(0.02)  # brief yield to event loop
+
+                # Await reporter task to get final state and propagate any exceptions
+                state = await reporter_task
+
                 yield sse_event("agent_done", {
                     "agent": "reporter", "label": "Reporter",
                     "result": {"report_length": len(state.get("final_report", "")), "timestamp": time.time()},

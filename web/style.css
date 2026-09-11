@@ -381,3 +381,18 @@ footer { padding: 40px; text-align: center; border-top: 1px solid var(--border-l
 }
 .toast.show { transform: translateY(0); opacity: 1; }
 .toast.error { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); color: #ef4444; }
+
+/* ─── STREAMING REPORT CURSOR ──────────────────────────── */
+:root { --muted: var(--text-dim); }
+
+.stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--indigo);
+  border-radius: 1px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: stream-blink 0.9s step-end infinite;
+}
+@keyframes stream-blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }

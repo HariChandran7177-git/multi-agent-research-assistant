@@ -368,9 +368,44 @@ function md2html(md) {
 //  SHOW REPORT
 // ─────────────────────────────────────────────────────────
 let _currentReport = '';
+let _streamBuffer = '';      // accumulates raw markdown as chunks arrive
+let _renderTimer = null;     // debounce timer for markdown re-render
+
+function _flushStreamBuffer() {
+  // Incrementally render accumulated markdown into the report body
+  const body = document.getElementById('report-body');
+  if (body && _streamBuffer) {
+    body.innerHTML = md2html(_streamBuffer);
+    // Auto-scroll only if user hasn't scrolled up
+    const rc = document.getElementById('report-content');
+    if (rc) rc.scrollTop = rc.scrollHeight;
+  }
+}
+
+function initReportStreaming() {
+  _streamBuffer = '';
+  _currentReport = '';
+  if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
+
+  // Show the report panel early with a blinking cursor
+  document.getElementById('report-placeholder').style.display = 'none';
+  const content = document.getElementById('report-content');
+  content.classList.add('visible');
+  document.getElementById('report-meta').innerHTML = '';
+  document.getElementById('report-body').innerHTML =
+    '<p style="color:var(--muted);font-style:italic;">Writing report<span class="stream-cursor"></span></p>';
+}
+
+function appendReportChunk(chunk) {
+  _streamBuffer += chunk;
+  // Debounce markdown re-render to 80ms so we batch rapid tokens
+  if (_renderTimer) clearTimeout(_renderTimer);
+  _renderTimer = setTimeout(_flushStreamBuffer, 80);
+}
 
 function showReport(data) {
-  _currentReport = data.report || '';
+  if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
+  _currentReport = data.report || _streamBuffer || '';
   document.getElementById('report-placeholder').style.display = 'none';
   const content = document.getElementById('report-content');
   content.classList.add('visible');
@@ -516,9 +551,15 @@ function handleSSE(event, data) {
       break;
     case 'agent_start':
       logStart(data);
+      // When Reporter starts, show live streaming panel immediately
+      if (data.agent === 'reporter') initReportStreaming();
       break;
     case 'agent_done':
       logDone(data);
+      break;
+    case 'report_chunk':
+      // Live token stream from Reporter — append and re-render
+      appendReportChunk(data.chunk || '');
       break;
     case 'complete':
       onComplete(data);
@@ -608,10 +649,13 @@ async function startResearch() {
   document.getElementById('report-placeholder').style.display = 'flex';
   document.getElementById('report-content').classList.remove('visible');
   
+  // Reset stream state
+  _streamBuffer = '';
+  _currentReport = '';
+  if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
+
   const plainBody = document.getElementById('plain-llm-body');
   if (plainBody) plainBody.innerHTML = '<div class="loading-pulse">Thinking...</div>';
-  const reportBody = document.getElementById('report-body');
-  if (reportBody) reportBody.innerHTML = '<div class="loading-pulse">Agents are researching...</div>';
 
   document.getElementById('copy-btn').style.display = 'none';
   document.getElementById('download-btn').style.display = 'none';

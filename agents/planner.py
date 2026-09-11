@@ -24,7 +24,7 @@ def invoke_with_retry(llm, prompt):
 
 async def planner_node(state: ResearchState) -> ResearchState:
     """Async planner node with timeout and metrics."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     query = state["query"]
     logger.info(f"Planning sub-tasks for query: {query}")
 

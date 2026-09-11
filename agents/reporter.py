@@ -1,4 +1,5 @@
 import asyncio
+from typing import Callable
 from langchain_groq import ChatGroq
 from core.state import ResearchState
 import os
@@ -16,15 +17,31 @@ logger = get_logger(__name__)
 llm = ChatGroq(
     model=GROQ_REPORTER_MODEL,
     api_key=GROQ_API_KEY,
-    temperature=0.4,
+    temperature=0.3,
 )
 
 # Minimum confidence below which we still write a report, but force strict grounding
 LOW_CONFIDENCE_THRESHOLD = 0.5
 
-REPORTER_PROMPT = """You are writing a research report. Follow these instructions in order.
+# ── Token caps (conservative to avoid context overflow and token limit errors) ──
+# Each char ≈ 0.25 tokens for English text. These caps keep total prompt well under 8k tokens.
+RESEARCH_CHAR_CAP = 3000   # ~750 tokens of research findings
+DOCS_CHAR_CAP = 2000       # ~500 tokens of retrieved docs
+PLAN_CHAR_CAP = 800        # ~200 tokens of plan
 
-## TONE (follow this first, before anything else)
+REPORTER_PROMPT = """You are writing a research report. Follow these instructions strictly.
+
+## CRITICAL: NO HALLUCINATION RULE (apply this before everything else)
+You MUST ONLY use facts, numbers, dates, names, and URLs that are EXPLICITLY present in the
+RESEARCH FINDINGS and TOP RETRIEVED DOCUMENTS sections below.
+- DO NOT invent statistics, dates, prices, version numbers, or product names.
+- DO NOT add outside knowledge that is not in the research data below.
+- If a fact is not found in the research data, write "information not available" instead of guessing.
+- The "## Sources" section MUST only contain URLs that literally appear in the research data below.
+  Do not fabricate URLs or domain names.
+- A shorter accurate report is ALWAYS better than a longer hallucinated one.
+
+## TONE (apply this after the no-hallucination rule)
 Write in this exact style: **{tone}**
 Examples of what this means in practice:
 - "ELI5": use analogies like "imagine a pizza delivery...", zero jargon
@@ -43,7 +60,7 @@ Examples of what this means in practice:
 ## RESEARCH PLAN (sub-tasks that were investigated)
 {plan}
 
-## RESEARCH FINDINGS (use specific facts, names, numbers from here)
+## RESEARCH FINDINGS (use ONLY these facts — do NOT add outside knowledge)
 {research_results}
 
 ## TOP RETRIEVED DOCUMENTS
@@ -60,16 +77,20 @@ Choose format based on what the content needs — not habit:
 ## CONTENT RULES
 - Open by directly addressing the query — no preamble
 - Bold specific names, numbers, and key facts: **AWS holds 31% market share**
-- Use real data from the research above — no invented examples
+- Use ONLY real data from the research above — no invented examples
 - End with a "## Bottom Line" section: one sharp paragraph wrapping up the key takeaway
-- Final section "## Sources": bullet list of markdown links from URLs in the research data
+- Final section "## Sources": bullet list of ONLY the markdown links whose URLs appear in the research data above
 
 Write the full report now in the tone: **{tone}**
 """
 
 LOW_CONFIDENCE_APPENDIX = """
 
-IMPORTANT: The research for this query was limited or incomplete (confidence score: {confidence:.2f}). Only state facts explicitly present in the research findings and retrieved documents above. Do not add outside knowledge, invented statistics, dates, prices, or assumed details. If information is missing or unclear, say so directly in the report instead of filling the gap. Add a short note near the top flagging that research coverage was limited.
+IMPORTANT: The research for this query was limited or incomplete (confidence score: {confidence:.2f}).
+Only state facts explicitly present in the research findings and retrieved documents above.
+Do NOT add outside knowledge, invented statistics, dates, prices, or assumed details.
+If information is missing or unclear, write "information not available" in the report instead of filling the gap.
+Add a short ⚠️ note near the top flagging that research coverage was limited.
 """
 
 
@@ -89,13 +110,13 @@ def invoke_with_retry(llm, prompt):
 
 
 def _build_prompt(tone, query, plan_text, research_text, docs_text, confidence=None):
-    """Build the reporter prompt, optionally appending a strict-grounding warning for low-confidence research."""
+    """Build the reporter prompt, applying token caps and optionally appending strict-grounding warning."""
     prompt = REPORTER_PROMPT.format(
         tone=tone,
         query=query,
-        plan=plan_text,
-        research_results=research_text,
-        retrieved_docs=docs_text,
+        plan=plan_text[:PLAN_CHAR_CAP],
+        research_results=research_text[:RESEARCH_CHAR_CAP],
+        retrieved_docs=docs_text[:DOCS_CHAR_CAP],
     )
     if confidence is not None and confidence < LOW_CONFIDENCE_THRESHOLD:
         prompt += LOW_CONFIDENCE_APPENDIX.format(confidence=confidence)
@@ -163,15 +184,15 @@ async def reporter_node(state: ResearchState) -> ResearchState:
       grounding to retrieved data only, and flag the limitation in the output
     - Confidence at/above threshold -> normal report generation
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     logger.info("Writing final report")
 
     plan_text = "\n".join(state.get("plan", []))
     research_list = state.get("research_results", [])
     docs_list = state.get("retrieved_docs", [])
-    # truncate aggressively to stay under token limits
-    research_text = "\n".join(research_list)[:4000]
-    docs_text = "\n".join(docs_list)[:3000]
+    # Aggressive truncation to stay under token limits and prevent hallucination from context overflow
+    research_text = "\n".join(research_list)[:RESEARCH_CHAR_CAP]
+    docs_text = "\n".join(docs_list)[:DOCS_CHAR_CAP]
     tone = state.get("tone", "super friendly and conversational")
     confidence = state.get("confidence_score", 0)
 
@@ -215,6 +236,76 @@ async def reporter_node(state: ResearchState) -> ResearchState:
         logger.error(f"LLM call failed after retries: {e}")
         state["final_report"] = _error_fallback(
             state["query"], plan_text, research_text, e)
+        metrics.end_agent("reporter", error=str(e))
+
+    return state
+
+
+async def reporter_node_streaming(
+    state: ResearchState,
+    chunk_callback: Callable
+) -> ResearchState:
+    """Streaming variant of reporter_node.
+
+    Streams LLM tokens via chunk_callback as they are generated, then
+    stores the completed report in state["final_report"].
+
+    Args:
+        state: The current ResearchState.
+        chunk_callback: An async callable that receives each text chunk string.
+    """
+    logger.info("Writing final report (streaming mode)")
+
+    plan_text = "\n".join(state.get("plan", []))
+    research_list = state.get("research_results", [])
+    docs_list = state.get("retrieved_docs", [])
+    research_text = "\n".join(research_list)[:RESEARCH_CHAR_CAP]
+    docs_text = "\n".join(docs_list)[:DOCS_CHAR_CAP]
+    tone = state.get("tone", "super friendly and conversational")
+    confidence = state.get("confidence_score", 0)
+    has_research = bool(research_list) or bool(docs_list)
+
+    if not has_research:
+        logger.warning(
+            f"No research data at all (confidence={confidence}) — using honest fallback")
+        fallback = _no_research_fallback(state["query"], plan_text, confidence)
+        state["final_report"] = fallback
+        # Stream fallback as a single chunk so UI updates
+        await chunk_callback(fallback)
+        metrics.end_agent("reporter", error="no_research_data")
+        return state
+
+    if confidence < LOW_CONFIDENCE_THRESHOLD:
+        logger.warning(
+            f"Low confidence research (confidence={confidence}) — strict grounding mode")
+
+    prompt = _build_prompt(
+        tone, state["query"], plan_text, research_text, docs_text, confidence)
+
+    full_report = ""
+
+    try:
+        async for chunk in llm.astream(prompt):
+            text = chunk.content
+            if text:
+                full_report += text
+                await chunk_callback(text)
+
+        state["final_report"] = full_report.strip()
+        logger.info(f"Streaming report complete — {len(full_report)} chars")
+        metrics.end_agent("reporter", input_tokens=len(prompt), output_tokens=len(full_report))
+
+    except Exception as e:
+        err_type = type(e).__name__
+        logger.error(f"Streaming LLM failed ({err_type}): {e}")
+        # If we got partial output, use it; otherwise serve error fallback
+        if full_report.strip():
+            logger.warning("Using partial streaming output as report")
+            state["final_report"] = full_report.strip()
+        else:
+            fallback = _error_fallback(state["query"], plan_text, research_text, e)
+            state["final_report"] = fallback
+            await chunk_callback(fallback)
         metrics.end_agent("reporter", error=str(e))
 
     return state

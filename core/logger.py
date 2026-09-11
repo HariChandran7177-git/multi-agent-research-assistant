@@ -31,8 +31,12 @@ def get_logger(name: str) -> logging.Logger:
         
         q_filter = QueryFilter()
         
-        # Console handler (INFO and above)
-        console_handler = logging.StreamHandler(sys.stdout)
+        # Console handler — force UTF-8 so Windows CP1252 doesn't crash on non-ASCII chars
+        # (Tavily results often contain \u2011 non-breaking hyphens and similar unicode)
+        import io
+        utf8_stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace') \
+            if hasattr(sys.stdout, 'buffer') else sys.stdout
+        console_handler = logging.StreamHandler(utf8_stdout)
         console_handler.setFormatter(formatter)
         console_handler.addFilter(q_filter)
         logger.addHandler(console_handler)

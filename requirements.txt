@@ -1,5 +1,4 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.13.0+cpu
+
 gunicorn
 annotated-doc==0.0.4
 annotated-types==0.7.0
@@ -84,5 +83,5 @@ virtualenv==21.5.1
 websockets==15.0.1
 xxhash==3.8.0
 zstandard==0.25.0
-sentence-transformers>=2.2.0
+# sentence-transformers removed: switched to Gemini API embeddings (no PyTorch needed)
 langgraph-checkpoint-sqlite==3.1.1

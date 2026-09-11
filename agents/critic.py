@@ -52,11 +52,12 @@ def invoke_with_retry(llm, prompt):
 
 async def critic_node(state: ResearchState) -> ResearchState:
     """Async critic node with timeout and metrics."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     logger.info("Evaluating research quality")
 
-    research_text = "\n".join(state.get("research_results", []))[:8000]
-    docs_text = "\n".join(state.get("retrieved_docs", []))[:6000]
+    # Conservative caps to stay under LLM context limits (prevents 400 context_length_exceeded)
+    research_text = "\n".join(state.get("research_results", []))[:3000]
+    docs_text = "\n".join(state.get("retrieved_docs", []))[:2000]
 
     prompt = CRITIC_PROMPT.format(
         query=state["query"],
