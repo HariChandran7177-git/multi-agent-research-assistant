@@ -118,7 +118,7 @@ h1.headline em{ font-style: italic; color: var(--teal); font-weight: 400; }
 .quick-examples span:hover{ border-color: var(--teal); color: var(--teal); background: rgba(16, 185, 129, 0.1); transform: translateY(-2px); }
 
 /* ---------- SECTION HEADERS ---------- */
-.section{ padding: 100px 0; border-top: 1px solid var(--line); }
+.section{ padding: 100px 0; border-top: 1px solid var(--line); scroll-margin-top: 90px; }
 .section-head{ margin-bottom: 48px; max-width: 660px; }
 .section-label{ font-family: var(--mono); font-size: 13px; color: var(--muted-2); margin-bottom: 12px; letter-spacing: 1px; }
 .section-title{ font-family: var(--serif); font-size: 36px; font-weight: 500; margin-bottom: 16px; }

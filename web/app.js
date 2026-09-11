@@ -148,6 +148,7 @@ let isPipelineRunning = false;
 
 function fillQuery(el) { 
   document.getElementById('queryInput').value = el.textContent; 
+  startRealPipeline();
 }
 
 async function startRealPipeline() {
@@ -402,5 +403,8 @@ async function loadArchive() {
 setTimeout(() => loadArchive(), 500);
 
 document.getElementById('queryInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') startRealPipeline();
+  if (e.key === 'Enter' || e.keyCode === 13) {
+    e.preventDefault();
+    startRealPipeline();
+  }
 });
