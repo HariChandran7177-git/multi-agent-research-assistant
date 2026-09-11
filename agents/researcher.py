@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 import os
 import asyncio
 import concurrent.futures
@@ -60,10 +61,9 @@ async def _process_task(task: str, executor: concurrent.futures.Executor) -> lis
 
 async def researcher_node(state: ResearchState) -> ResearchState:
     """Async researcher node with timeout and metrics."""
-    loop = asyncio.get_event_loop()
     plan = state["plan"]
     all_results = []
-    start_time = metrics.current_metrics.get("researcher", None)
+    metrics.current_metrics.get("researcher", None)
 
     logger.info(f"Starting parallel research for {len(plan)} sub-tasks")
 

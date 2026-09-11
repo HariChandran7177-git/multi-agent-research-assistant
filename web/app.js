@@ -1,203 +1,58 @@
-/* ─────────────────────────────────────────────────────────
-   NEURALDESK — app.js
-   Multi-Agent Research Assistant Frontend Logic
-───────────────────────────────────────────────────────── */
-
-// Auto-detect API base: same origin on Render, localhost:8000 in local dev
 const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
   ? 'http://localhost:8000'
   : window.location.origin;
 
-// ─────────────────────────────────────────────────────────
-//  PARTICLE CANVAS
-// ─────────────────────────────────────────────────────────
-(function initParticles() {
-  const canvas = document.getElementById('particle-canvas');
-  const ctx = canvas.getContext('2d');
-  let W, H, particles = [];
-  let mouse = { x: null, y: null };
-  const COUNT = 80;
-  const MAX_DIST = 140;
-  const COLORS = ['194,65,12', '217,119,6', '101,163,13'];
+const AGENT_ORDER = ['router', 'planner', 'researcher', 'retriever', 'critic', 'reporter'];
 
-  function resize() {
-    W = canvas.width = window.innerWidth;
-    H = canvas.height = window.innerHeight;
-  }
+const AGENT_META = {
+  'router':     { icon: '⌁', name: 'Router',     tech: 'Groq · Model' },
+  'planner':    { icon: '◫', name: 'Planner',    tech: 'LangGraph' },
+  'researcher': { icon: '⌕', name: 'Researcher', tech: 'Tavily API' },
+  'retriever':  { icon: '▤', name: 'Retriever',  tech: 'Qdrant' },
+  'critic':     { icon: '◎', name: 'Critic',     tech: 'Hybrid Scoring' },
+  'reporter':   { icon: '▧', name: 'Reporter',   tech: 'Markdown' },
+};
 
-  function mkParticle() {
-    return {
-      x: Math.random() * W, y: Math.random() * H,
-      vx: (Math.random() - .5) * .4, vy: (Math.random() - .5) * .4,
-      r: Math.random() * 1.5 + .5,
-      color: COLORS[Math.floor(Math.random() * COLORS.length)],
-      alpha: Math.random() * .4 + .1,
-    };
-  }
-
-  function init() { resize(); particles = []; for (let i = 0; i < COUNT; i++) particles.push(mkParticle()); }
-
-  let lastScrollY = window.scrollY;
-  let scrollVelocity = 0;
-  window.addEventListener('scroll', () => {
-    const currentScrollY = window.scrollY;
-    scrollVelocity = (currentScrollY - lastScrollY) * 0.15;
-    lastScrollY = currentScrollY;
+// Markdown Parser
+function md2html(md) {
+  if (!md) return '';
+  let h = md;
+  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const esc = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<pre><code class="lang-${lang}">${esc.trim()}</code></pre>`;
   });
-
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
-    scrollVelocity *= 0.92; // decay scroll physics
-    
-    for (let i = 0; i < particles.length; i++) {
-      const p = particles[i];
-      p.x += p.vx;
-      p.y += p.vy - (scrollVelocity * p.r * 0.6); // 3D parallax scroll effect
-      
-      if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
-      if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
-      
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${p.color},${p.alpha})`; ctx.fill();
-
-      for (let j = i + 1; j < particles.length; j++) {
-        const q = particles[j];
-        const dx = p.x - q.x, dy = p.y - q.y;
-        const d = Math.sqrt(dx * dx + dy * dy);
-        if (d < MAX_DIST) {
-          ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
-          ctx.strokeStyle = `rgba(139,92,246,${(1 - d / MAX_DIST) * .15})`;
-          ctx.lineWidth = .8; ctx.stroke();
-        }
-      }
-
-      if (mouse.x !== null) {
-        const dx = p.x - mouse.x, dy = p.y - mouse.y;
-        const d = Math.sqrt(dx * dx + dy * dy);
-        if (d < 80) {
-          p.vx += dx / d * .3; p.vy += dy / d * .3;
-          const sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-          if (sp > 2) { p.vx /= sp; p.vy /= sp; }
-        }
-      }
-    }
-    requestAnimationFrame(draw);
-  }
-
-  window.addEventListener('resize', resize);
-  window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
-  window.addEventListener('mouseleave', () => { mouse.x = null; mouse.y = null; });
-  init(); draw();
-})();
-
-// ─────────────────────────────────────────────────────────
-//  SCROLL REVEAL (GSAP + ScrollTrigger)
-// ─────────────────────────────────────────────────────────
-(function initScrollReveal() {
-  if (typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') {
-    console.warn("GSAP or ScrollTrigger not loaded.");
-    return;
-  }
-  
-  gsap.registerPlugin(ScrollTrigger);
-
-  // Helper to split text into chars
-  function splitTextToChars(element) {
-    if (!element) return;
-    const text = element.innerText.trim();
-    element.innerHTML = text.split('').map(char => {
-      if (char === ' ') return '<span>&nbsp;</span>';
-      return `<span>${char}</span>`;
-    }).join('');
-  }
-
-  // Do NOT split hero title lines — gradient -webkit-background-clip breaks when innerHTML is replaced
-
-  // Hero animations — animate LINES as whole units, not split chars
-  // (char-splitting breaks the CSS gradient clip on .line-1 / .line-2)
-  gsap.from('.hero-eyebrow', { opacity: 0, y: 15, duration: 0.6, ease: 'power2.out' });
-  gsap.from('.hero-title .line-1', { opacity: 0, y: 30, duration: 0.7, ease: 'power3.out', delay: 0.15 });
-  gsap.from('.hero-title .line-2', { opacity: 0, y: 30, duration: 0.7, ease: 'power3.out', delay: 0.3, clearProps: 'transform,opacity' });
-  gsap.from('.hero-sub', { opacity: 0, y: 15, duration: 0.8, ease: 'power2.out', delay: 0.45 });
-  gsap.from('.search-container', { opacity: 0, y: 15, duration: 0.8, ease: 'power2.out', delay: 0.55 });
-
-  // Section titles — fade whole element, no splitting
-  document.querySelectorAll('.section-title').forEach(title => {
-    gsap.from(title, {
-      scrollTrigger: { trigger: title, start: 'top 88%', toggleActions: 'play none none none' },
-      duration: 0.5,
-      ease: 'power2.out'
-    });
+  h = h.replace(/`([^`]+)`/g, (_, c) => `<code>${c.replace(/</g,'&lt;')}</code>`);
+  h = h.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  h = h.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  h = h.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  h = h.replace(/^---$/gm, '<hr>');
+  h = h.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  h = h.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+  h = h.replace(/(\|.+\|\n)(\|[-:| ]+\|\n)((?:\|.+\|\n?)*)/g, (_, header, sep, body) => {
+    const heads = header.trim().split('|').filter(Boolean).map(x => `<th>${x.trim()}</th>`).join('');
+    const rows = body.trim().split('\n').map(row =>
+      `<tr>${row.trim().split('|').filter(Boolean).map(c => `<td>${c.trim()}</td>`).join('')}</tr>`
+    ).join('');
+    return `<table><thead><tr>${heads}</tr></thead><tbody>${rows}</tbody></table>`;
   });
-
-  // Scroll triggers for eyebrows and subtitles
-  document.querySelectorAll('.section-eyebrow, .section-subtitle').forEach(el => {
-    gsap.from(el, {
-      scrollTrigger: {
-        trigger: el,
-        start: 'top 88%',
-        toggleActions: 'play none none none'
-      },
-      opacity: 0,
-      y: 15,
-      duration: 0.6,
-      ease: 'power2.out'
-    });
+  h = h.replace(/((?:^[ \t]*[-*+] .+\n?)+)/gm, match => {
+    const items = match.trim().split('\n').map(l => `<li>${l.replace(/^[ \t]*[-*+] /, '')}</li>`).join('');
+    return `<ul>${items}</ul>`;
   });
-
-  // Agent Cards reveal
-  if (document.querySelector('.pipeline-grid')) {
-    gsap.from('.agent-card', {
-      scrollTrigger: {
-        trigger: '.pipeline-grid',
-        start: 'top 80%',
-        toggleActions: 'play none none none'
-      },
-      opacity: 0,
-      y: 25,
-      stagger: 0.06,
-      duration: 0.7,
-      ease: 'power3.out',
-      clearProps: 'transform,opacity'
-    });
-  }
-  
-  // Tech Cards reveal
-  if (document.querySelector('.tech-grid')) {
-    gsap.from('.tech-card', {
-      scrollTrigger: {
-        trigger: '.tech-grid',
-        start: 'top 85%',
-        toggleActions: 'play none none none'
-      },
-      opacity: 0,
-      y: 20,
-      stagger: 0.04,
-      duration: 0.6,
-      ease: 'power2.out',
-      clearProps: 'transform,opacity'
-    });
-  }
-})();
-
-// ─────────────────────────────────────────────────────────
-//  TEXTAREA AUTO-RESIZE
-// ─────────────────────────────────────────────────────────
-(function() {
-  const ta = document.getElementById('query-input');
-  ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; });
-  ta.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); startResearch(); }
+  h = h.replace(/((?:^\d+\. .+\n?)+)/gm, match => {
+    const items = match.trim().split('\n').map(l => `<li>${l.replace(/^\d+\. /, '')}</li>`).join('');
+    return `<ol>${items}</ol>`;
   });
-})();
-
-// ─────────────────────────────────────────────────────────
-//  UTILITY
-// ─────────────────────────────────────────────────────────
-function setQuery(text) {
-  const ta = document.getElementById('query-input');
-  ta.value = text;
-  ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; ta.focus();
+  h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  h = h.split('\n\n').map(block => {
+    block = block.trim();
+    if (!block) return '';
+    if (/^<(h[1-6]|ul|ol|pre|table|blockquote|hr)/.test(block)) return block;
+    return `<p>${block.replace(/\n/g, '<br/>')}</p>`;
+  }).join('\n');
+  return h;
 }
 
 function showToast(msg, type = 'success') {
@@ -208,779 +63,342 @@ function showToast(msg, type = 'success') {
   setTimeout(() => el.classList.remove('show'), 3500);
 }
 
-function fmtTime(ts) {
-  const d = new Date(ts * 1000);
-  return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
 // ─────────────────────────────────────────────────────────
-//  PIPELINE NODE STATE
+// PIPELINE RENDERING
 // ─────────────────────────────────────────────────────────
-function setNodeActive(name) {
-  document.querySelectorAll('.pipe-node').forEach(n => n.classList.remove('active'));
-  const n = document.getElementById('pnode-' + name);
-  if (n) n.classList.add('active');
-}
-
-function setNodeDone(name) {
-  const n = document.getElementById('pnode-' + name);
-  if (!n) return;
-  n.classList.remove('active'); n.classList.add('done');
-  const wrap = n.querySelector('.pipe-icon-wrap');
-  if (wrap) {
-    const orig = wrap.textContent;
-    wrap.textContent = '✓';
-    setTimeout(() => { wrap.textContent = orig; }, 700);
-  }
-}
-
-// ─────────────────────────────────────────────────────────
-//  ACTIVITY LOG
-// ─────────────────────────────────────────────────────────
-function logStart(data) {
-  const log = document.getElementById('activity-log');
-  const item = document.createElement('div');
-  item.className = 'activity-item active-item';
-  item.id = 'alog-' + data.agent + '-' + Date.now();
-  item.dataset.agent = data.agent;
-  item.innerHTML = `
-    <div class="activity-icon">${data.icon || '⚙️'}</div>
-    <div class="activity-content">
-      <div class="activity-agent">${(data.label || data.agent).toUpperCase()}</div>
-      <div class="activity-msg">${data.message}</div>
+const pipelineEl = document.getElementById('pipeline');
+AGENT_ORDER.forEach((key, i) => {
+  const a = AGENT_META[key];
+  const wrap = document.createElement('div');
+  wrap.className = 'node-wrap';
+  wrap.innerHTML = `
+    <div class="node" id="node-${key}" onclick="openDrawer('${key}')">
+      <div class="node-icon">
+        <div class="spinner"></div>
+        ${a.icon}
+        <div class="node-badge" id="badge-${key}">✓</div>
+      </div>
+      <div class="node-name dim" id="name-${key}">${a.name}</div>
+      <div class="node-status" id="status-${key}">idle</div>
     </div>
-    <div class="activity-time">${fmtTime(data.timestamp || Date.now() / 1000)}</div>
+    ${i < AGENT_ORDER.length-1 ? '<div class="connector"><div class="fill" id="conn-'+key+'"></div></div>' : ''}
   `;
-  log.appendChild(item);
-  log.scrollTop = log.scrollHeight;
-  // Tag as "last active" for this agent
-  log.querySelectorAll(`[data-agent="${data.agent}"].active-item`).forEach(el => {
-    if (el !== item) { el.classList.remove('active-item'); }
-  });
-  setNodeActive(data.agent);
-}
-
-function logDone(data) {
-  // Find most recent active item for this agent
-  const log = document.getElementById('activity-log');
-  const items = log.querySelectorAll(`[data-agent="${data.agent}"].active-item`);
-  const item = items[items.length - 1];
-  if (item) {
-    item.classList.remove('active-item'); item.classList.add('done-item');
-    const r = data.result || {};
-    let txt = '';
-    if (r.tone) txt = `Tone: <strong>${r.tone}</strong>`;
-    if (r.plan && r.plan.length) {
-      txt = `<strong>${r.plan.length} sub-tasks planned:</strong><br><ul style="margin: 4px 0 0 16px; padding: 0;">` + r.plan.map(t => `<li style="margin-bottom: 2px;">${t}</li>`).join('') + `</ul>`;
-    }
-    if (r.sources_found !== undefined) txt = `<strong>${r.sources_found} sources retrieved</strong> via parallel web search`;
-    if (r.docs_retrieved !== undefined) txt = `<strong>${r.docs_retrieved} docs</strong> retrieved from Qdrant vector store`;
-    if (r.confidence !== undefined) {
-      txt = `<strong>Score: ${r.confidence}</strong> — ${r.passed ? '<span style="color:var(--emerald)">✓ passed threshold</span>' : '<span style="color:var(--rose)">↻ looping for depth</span>'}<br><em>Critique: ${r.critique}</em>`;
-      updateConfidence(r.confidence);
-    }
-    if (r.report_length) txt = `<strong>${r.report_length.toLocaleString()} chars generated</strong>`;
-    
-    if (txt) {
-      const content = item.querySelector('.activity-content');
-      const res = document.createElement('div');
-      res.className = 'activity-result'; 
-      res.innerHTML = txt;
-      content.appendChild(res);
-    }
-  }
-  setNodeDone(data.agent);
-}
-
-function updateConfidence(score) {
-  document.getElementById('conf-value').textContent = score.toFixed(2);
-  setTimeout(() => { document.getElementById('conf-fill').style.width = (score * 100) + '%'; }, 50);
-}
-
-// ─────────────────────────────────────────────────────────
-//  MARKDOWN PARSER (lightweight, no deps)
-// ─────────────────────────────────────────────────────────
-function md2html(md) {
-  if (!md) return '';
-  let h = md;
-
-  // Fenced code blocks
-  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const esc = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    return `<pre><code class="lang-${lang}">${esc.trim()}</code></pre>`;
-  });
-
-  // Inline code
-  h = h.replace(/`([^`]+)`/g, (_, c) => `<code>${c.replace(/</g,'&lt;')}</code>`);
-
-  // Headers
-  h = h.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  h = h.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  h = h.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-
-  // Horizontal rules
-  h = h.replace(/^---$/gm, '<hr>');
-
-  // Bold + italic combinations
-  h = h.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-  // Blockquotes
-  h = h.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
-
-  // Tables (header | sep | rows)
-  h = h.replace(/(\|.+\|\n)(\|[-:| ]+\|\n)((?:\|.+\|\n?)*)/g, (_, header, sep, body) => {
-    const heads = header.trim().split('|').filter(Boolean).map(x => `<th>${x.trim()}</th>`).join('');
-    const rows = body.trim().split('\n').map(row =>
-      `<tr>${row.trim().split('|').filter(Boolean).map(c => `<td>${c.trim()}</td>`).join('')}</tr>`
-    ).join('');
-    return `<table><thead><tr>${heads}</tr></thead><tbody>${rows}</tbody></table>`;
-  });
-
-  // Unordered lists
-  h = h.replace(/((?:^[ \t]*[-*+] .+\n?)+)/gm, match => {
-    const items = match.trim().split('\n').map(l => `<li>${l.replace(/^[ \t]*[-*+] /, '')}</li>`).join('');
-    return `<ul>${items}</ul>`;
-  });
-
-  // Ordered lists
-  h = h.replace(/((?:^\d+\. .+\n?)+)/gm, match => {
-    const items = match.trim().split('\n').map(l => `<li>${l.replace(/^\d+\. /, '')}</li>`).join('');
-    return `<ol>${items}</ol>`;
-  });
-
-  // Links
-  h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-
-  // Paragraphs
-  h = h.split('\n\n').map(block => {
-    block = block.trim();
-    if (!block) return '';
-    if (/^<(h[1-6]|ul|ol|pre|table|blockquote|hr)/.test(block)) return block;
-    return `<p>${block.replace(/\n/g, '<br/>')}</p>`;
-  }).join('\n');
-
-  return h;
-}
-
-// ─────────────────────────────────────────────────────────
-//  SHOW REPORT
-// ─────────────────────────────────────────────────────────
-let _currentReport = '';
-let _streamBuffer = '';      // accumulates raw markdown as chunks arrive
-let _renderTimer = null;     // debounce timer for markdown re-render
-
-function _flushStreamBuffer() {
-  // Incrementally render accumulated markdown into the report body
-  const body = document.getElementById('report-body');
-  if (body && _streamBuffer) {
-    body.innerHTML = md2html(_streamBuffer);
-    // Auto-scroll only if user hasn't scrolled up
-    const rc = document.getElementById('report-content');
-    if (rc) rc.scrollTop = rc.scrollHeight;
-  }
-}
-
-function initReportStreaming() {
-  _streamBuffer = '';
-  _currentReport = '';
-  if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
-
-  // Show the report panel early with a blinking cursor
-  document.getElementById('report-placeholder').style.display = 'none';
-  const content = document.getElementById('report-content');
-  content.classList.add('visible');
-  document.getElementById('report-meta').innerHTML = '';
-  document.getElementById('report-body').innerHTML =
-    '<p style="color:var(--muted);font-style:italic;">Writing report<span class="stream-cursor"></span></p>';
-}
-
-function appendReportChunk(chunk) {
-  _streamBuffer += chunk;
-  // Debounce markdown re-render to 80ms so we batch rapid tokens
-  if (_renderTimer) clearTimeout(_renderTimer);
-  _renderTimer = setTimeout(_flushStreamBuffer, 80);
-}
-
-function showReport(data) {
-  if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
-  _currentReport = data.report || _streamBuffer || '';
-  document.getElementById('report-placeholder').style.display = 'none';
-  const content = document.getElementById('report-content');
-  content.classList.add('visible');
-
-  const bd = data.score_breakdown || {};
-  document.getElementById('report-meta').innerHTML = `
-    <div class="meta-chip emerald">Confidence: ${(data.confidence * 100).toFixed(0)}%</div>
-    <div class="meta-chip violet">Iterations: ${data.iterations}</div>
-    <div class="meta-chip cyan">Tone: ${data.tone}</div>
-    ${bd.llm_score ? `<div class="meta-chip">LLM: ${bd.llm_score}</div>` : ''}
-    ${bd.objective_score ? `<div class="meta-chip">Objective: ${bd.objective_score.toFixed(3)}</div>` : ''}
-  `;
-
-  document.getElementById('report-body').innerHTML = md2html(_currentReport);
-  document.getElementById('copy-btn').style.display = 'block';
-  document.getElementById('download-btn').style.display = 'block';
-  document.getElementById('doubt-box').style.display = 'block';
-  document.getElementById('doubt-input').value = '';
-  document.getElementById('doubt-answer').style.display = 'none';
-  updateConfidence(data.confidence);
-}
-
-function copyReport() {
-  navigator.clipboard.writeText(_currentReport).then(() => showToast('Report copied!'));
-}
-
-function downloadReport() {
-  const blob = new Blob([_currentReport], { type: 'text/markdown' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'research-report.md'; a.click();
-  showToast('Downloading...');
-}
-
-// ─────────────────────────────────────────────────────────
-//  RESET DASHBOARD
-// ─────────────────────────────────────────────────────────
-function resetDashboard() {
-  document.getElementById('dashboard').classList.remove('active');
-  document.getElementById('activity-log').innerHTML = '';
-  document.getElementById('conf-value').textContent = '--';
-  document.getElementById('conf-fill').style.width = '0%';
-  document.getElementById('report-placeholder').style.display = 'flex';
-  document.getElementById('report-content').classList.remove('visible');
-  document.getElementById('report-meta').innerHTML = '';
-  document.getElementById('report-body').innerHTML = '';
-  document.getElementById('copy-btn').style.display = 'none';
-  document.getElementById('download-btn').style.display = 'none';
-  const doubtBox = document.getElementById('doubt-box');
-  if (doubtBox) doubtBox.style.display = 'none';
-  const doubtAnswer = document.getElementById('doubt-answer');
-  if (doubtAnswer) doubtAnswer.style.display = 'none';
-  const hitlBox = document.getElementById('hitl-box');
-  if (hitlBox) hitlBox.style.display = 'none';
-  document.querySelectorAll('.pipe-node').forEach(n => n.classList.remove('active','done'));
-  document.getElementById('live-label').textContent = 'LIVE';
-  document.getElementById('live-dot').style.cssText = '';
-  const btn = document.getElementById('run-btn');
-  btn.disabled = false; btn.classList.remove('loading');
-  _currentReport = '';
-  document.getElementById('hero').scrollIntoView({ behavior: 'smooth' });
-}
-
-// ─────────────────────────────────────────────────────────
-//  ASK ABOUT THIS REPORT (DOUBT)
-// ─────────────────────────────────────────────────────────
-async function askDoubt() {
-  const question = document.getElementById('doubt-input').value.trim();
-  if (!question) return;
-  
-  const btn = document.getElementById('doubt-btn');
-  const ansDiv = document.getElementById('doubt-answer');
-  
-  btn.disabled = true;
-  btn.style.opacity = '0.7';
-  btn.textContent = '...';
-  
-  ansDiv.style.display = 'block';
-  ansDiv.innerHTML = '<span class="loading-pulse">Analyzing report...</span>';
-  
-  try {
-    const resp = await fetch(`${API_BASE}/doubt`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ report: _currentReport, question })
-    });
-    const data = await resp.json();
-    ansDiv.innerHTML = `<strong style="color:var(--emerald)">Answer:</strong> ${data.answer}`;
-  } catch (err) {
-    ansDiv.innerHTML = `<span style="color:var(--rose)">Error: ${err.message}</span>`;
-  }
-  
-  btn.disabled = false;
-  btn.style.opacity = '1';
-  btn.textContent = 'Ask';
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  const di = document.getElementById('doubt-input');
-  if (di) di.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); askDoubt(); }
-  });
+  pipelineEl.appendChild(wrap);
 });
 
-// ─────────────────────────────────────────────────────────
-//  HUMAN IN THE LOOP (HITL)
-// ─────────────────────────────────────────────────────────
-let _activeThreadId = null;
-
-async function resumeHitl() {
-  if (!_activeThreadId) return;
-  const btn = document.getElementById('hitl-btn');
-  btn.disabled = true;
-  btn.textContent = 'Resuming...';
+let agentLogs = {}; // stores latest logs per agent for the drawer
+function openDrawer(key) {
+  const a = AGENT_META[key];
+  const drawer = document.getElementById('drawer');
+  document.getElementById('drawerTitle').textContent = a.name;
+  document.getElementById('drawerTech').textContent = a.tech;
   
-  try {
-    const resp = await fetch(`${API_BASE}/research/resume`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ thread_id: _activeThreadId })
-    });
-    if (!resp.ok) throw new Error('Failed to resume');
-    document.getElementById('hitl-box').style.display = 'none';
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = 'Yes, Write Report';
-    showToast('Failed to resume: ' + err.message, 'error');
+  if (agentLogs[key]) {
+    document.getElementById('drawerBody').innerHTML = agentLogs[key].desc || '—';
+    document.getElementById('drawerLog').textContent = agentLogs[key].log || '—';
+  } else {
+    document.getElementById('drawerBody').textContent = 'Waiting for data...';
+    document.getElementById('drawerLog').textContent = '—';
   }
+  drawer.classList.add('open');
 }
 
-// ─────────────────────────────────────────────────────────
-//  SSE EVENT HANDLER
-// ─────────────────────────────────────────────────────────
-function handleSSE(event, data) {
-  switch (event) {
-    case 'start':
-      // Kicked off — router is first
-      logStart({
-        agent: 'router', icon: '🔀', label: 'Router',
-        message: 'Analyzing query intent and detecting tone...',
-        timestamp: data.timestamp
-      });
-      break;
-    case 'agent_start':
-      logStart(data);
-      // When Reporter starts, show live streaming panel immediately
-      if (data.agent === 'reporter') initReportStreaming();
-      break;
-    case 'agent_done':
-      logDone(data);
-      break;
-    case 'report_chunk':
-      // Live token stream from Reporter — append and re-render
-      appendReportChunk(data.chunk || '');
-      break;
-    case 'complete':
-      onComplete(data);
-      break;
-    case 'error':
-      onError(data);
-      break;
-    case 'plain_llm_done':
-      showPlainLLM(data);
-      break;
-    case 'hitl_pause':
-      showHitlPause(data);
-      break;
-  }
-}
-
-function showHitlPause(data) {
-  _activeThreadId = data.thread_id;
-  const box = document.getElementById('hitl-box');
-  if (box) {
-    box.style.display = 'block';
-    const msg = document.getElementById('hitl-msg');
-    if (msg && data.message) msg.textContent = data.message;
-    const btn = document.getElementById('hitl-btn');
-    if (btn) { btn.disabled = false; btn.textContent = 'Yes, Write Report'; }
-  }
-  showToast('Human review requested');
-}
-
-function showPlainLLM(data) {
-  const container = document.getElementById('plain-llm-body');
-  if (container) {
-    container.innerHTML = md2html(data.response || '');
-  }
-}
-
-function onComplete(data) {
-  const dot = document.getElementById('live-dot');
-  dot.style.background = 'var(--emerald)';
-  dot.style.boxShadow = '0 0 6px var(--emerald)';
-  document.getElementById('live-label').textContent = 'DONE';
-  showReport(data);
-  const btn = document.getElementById('run-btn');
-  btn.disabled = false; btn.classList.remove('loading');
-  showToast('Research complete! 🎉');
-  document.getElementById('report-content').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-function onError(data) {
-  const log = document.getElementById('activity-log');
-  const item = document.createElement('div');
-  item.className = 'activity-item';
-  item.style.cssText = 'border-color:rgba(244,63,94,.3);background:rgba(244,63,94,.05)';
-  item.innerHTML = `
-    <div class="activity-icon">❌</div>
-    <div class="activity-content">
-      <div class="activity-agent" style="color:var(--rose)">ERROR</div>
-      <div class="activity-msg">${data.message}</div>
-    </div>`;
-  log.appendChild(item);
-  const btn = document.getElementById('run-btn');
-  btn.disabled = false; btn.classList.remove('loading');
-  showToast(data.message, 'error');
-}
-
-// ─────────────────────────────────────────────────────────
-//  MAIN: START RESEARCH
-// ─────────────────────────────────────────────────────────
-async function startResearch() {
-  const query = document.getElementById('query-input').value.trim();
-  if (!query) { showToast('Please enter a research query', 'error'); return; }
-
-  // UI loading
-  const btn = document.getElementById('run-btn');
-  btn.disabled = true; btn.classList.add('loading');
-
-  // Show dashboard
-  document.getElementById('query-display-text').textContent = query;
-  document.getElementById('dashboard').classList.add('active');
-  document.getElementById('dashboard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-  // Reset
-  document.querySelectorAll('.pipe-node').forEach(n => n.classList.remove('active','done'));
-  document.getElementById('activity-log').innerHTML = '';
-  document.getElementById('conf-value').textContent = '--';
-  document.getElementById('conf-fill').style.width = '0%';
-  document.getElementById('report-placeholder').style.display = 'flex';
-  document.getElementById('report-content').classList.remove('visible');
+function resetPipeline() {
+  AGENT_ORDER.forEach(key => {
+    const node = document.getElementById('node-' + key);
+    node.className = 'node';
+    document.getElementById('name-' + key).classList.add('dim');
+    document.getElementById('status-' + key).textContent = 'idle';
+    if(document.getElementById('conn-' + key)) {
+      document.getElementById('conn-' + key).style.width = '0%';
+    }
+  });
+  agentLogs = {};
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('conf-svg').style.strokeDashoffset = '238.7';
+  document.getElementById('conf-val').textContent = '0.00';
+  document.getElementById('trend-bars').innerHTML = '<div style="color:var(--muted-2); font-size:12px; height:100%; display:flex; align-items:center;">Waiting for critic loops...</div>';
   
-  // Reset stream state
-  _streamBuffer = '';
-  _currentReport = '';
-  if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
+  document.getElementById('report-viewer-section').style.display = 'none';
+  document.getElementById('report-body').innerHTML = '<p style="color:var(--muted);font-style:italic;">Writing report<span class="stream-cursor"></span></p>';
+  document.getElementById('resume-btn').style.display = 'none';
+}
 
-  const plainBody = document.getElementById('plain-llm-body');
-  if (plainBody) plainBody.innerHTML = '<div class="loading-pulse">Thinking...</div>';
+function setNodeState(key, state, statusText) {
+  const node = document.getElementById('node-' + key);
+  if(!node) return;
+  node.className = 'node ' + state;
+  document.getElementById('name-' + key).classList.remove('dim');
+  if(statusText) document.getElementById('status-' + key).textContent = statusText;
+  
+  // Update connector if done
+  if(state === 'done') {
+    const conn = document.getElementById('conn-' + key);
+    if(conn) conn.style.width = '100%';
+  }
+}
 
-  document.getElementById('copy-btn').style.display = 'none';
-  document.getElementById('download-btn').style.display = 'none';
-  document.getElementById('live-label').textContent = 'LIVE';
-  document.getElementById('live-dot').style.cssText = '';
-  const hitlBox = document.getElementById('hitl-box');
-  if (hitlBox) hitlBox.style.display = 'none';
-  _currentReport = '';
-  _activeThreadId = null;
+// ─────────────────────────────────────────────────────────
+// SSE PIPELINE EXECUTION
+// ─────────────────────────────────────────────────────────
+let eventSource = null;
+let currentThreadId = null;
+let _streamBuffer = '';
+let isPipelineRunning = false;
+
+function fillQuery(el) { 
+  document.getElementById('queryInput').value = el.textContent; 
+}
+
+async function startRealPipeline() {
+  if (isPipelineRunning) return;
+  
+  const query = document.getElementById('queryInput').value.trim();
+  if (!query) { showToast('Please enter a query', 'error'); return; }
+
+  isPipelineRunning = true;
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('status-ring').style.animationPlayState = 'running';
+  document.getElementById('run-status').textContent = 'RESEARCHING...';
+  
+  resetPipeline();
+  
+  const payload = { query: query, user_id: 'browser_user' };
 
   try {
-    const resp = await fetch(`${API_BASE}/research/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
+    const res = await fetch(`${API_BASE}/research/stream`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
     });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
-    const reader = resp.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
+    if (!res.ok) {
+      if (res.status === 429) throw new Error('Too many requests. Please wait a minute.');
+      throw new Error(`Server error: ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
 
     while (true) {
-      const { done, value } = await reader.read();
+      const { value, done } = await reader.read();
       if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop();
-      let evType = null;
-      for (const line of lines) {
-        if (line.startsWith('event: ')) evType = line.slice(7).trim();
-        else if (line.startsWith('data: ') && evType) {
-          try { handleSSE(evType, JSON.parse(line.slice(6))); } catch (_) {}
-          evType = null;
-        }
+      
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        if (!part.startsWith('event:')) continue;
+        const lines = part.split('\n');
+        const evType = lines[0].replace('event: ', '').trim();
+        const evData = JSON.parse(lines[1].replace('data: ', '').trim());
+        handleSSEEvent(evType, evData);
       }
     }
   } catch (err) {
-    console.warn('API unavailable, using demo mode:', err.message);
-    showToast('API offline — running demo mode', 'error');
-    runDemoMode(query);
-  }
-}
-
-// ─────────────────────────────────────────────────────────
-//  DEMO MODE (no backend needed)
-// ─────────────────────────────────────────────────────────
-const DEMO_REPORT = `# AWS vs GCP for Startups in 2025: A Senior Engineer's Breakdown
-
-The honest answer? **It depends on your workload** — but the decision is far less symmetric than AWS's market dominance implies.
-
----
-
-## Market Reality
-
-**AWS holds ~31% of the global cloud market** vs. GCP's ~12% (Synergy Research, Q1 2025). That gap matters — it translates directly into a larger ecosystem, more StackOverflow answers, and a deeper talent pool of engineers who already know the platform.
-
-**GCP's stronghold** is data and ML workloads. If your startup is building anything that touches large-scale data pipelines, ML training, or analytics, GCP's native BigQuery + Vertex AI + TPU stack is genuinely superior and often meaningfully cheaper.
-
----
-
-## Comparison: What Actually Matters
-
-| Criteria | AWS | GCP |
-|---|---|---|
-| **Market share** | Dominant (31%) | Smaller (12%) |
-| **Startup credits** | $5K-$100K via Activate | $200K via Google for Startups |
-| **Managed Kubernetes** | EKS (complex config) | GKE (superior managed K8s) |
-| **ML/AI tooling** | SageMaker (verbose) | Vertex AI + TPUs |
-| **Data warehouse** | Redshift (complex tuning) | BigQuery (serverless, pay-per-query) |
-| **Networking pricing** | Expensive egress ($0.09/GB) | Cheaper egress, free between GCP services |
-
----
-
-## The Real Decision Framework
-
-**Choose AWS if:**
-- You're building a general SaaS product with no specific ML/data angle
-- Your team already has AWS experience
-- You need the widest range of third-party integrations
-- You're in a compliance-heavy industry
-
-**Choose GCP if:**
-- ML model training, fine-tuning, or inference is core to your product
-- You need a managed data warehouse without a dedicated data engineer
-- You're building on Kubernetes and want GKE
-- You're cost-sensitive on compute + networking
-
----
-
-## The Senior Engineer's Take
-
-> AWS is the safe default. GCP is the smart choice if data or ML is core to your product.
-
-The worst decision is agonizing over this for weeks. Pick one, use Terraform from day one so switching is possible later, and focus on shipping. The infrastructure difference will not be your startup's bottleneck.
-
----
-
-### Sources
-
-- [Synergy Research Group - Cloud Market Share Q1 2025](https://www.srgresearch.com)
-- [AWS Activate for Startups](https://aws.amazon.com/activate/)
-- [Google for Startups Cloud Program](https://cloud.google.com/startup)
-- [BigQuery Pricing Overview](https://cloud.google.com/bigquery/pricing)
-
----
-
-*Generated end-to-end by the 6-agent LangGraph pipeline in ~42 seconds.*`;
-
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-async function runDemoMode(query) {
-  const steps = [
-    { agent: 'router',     icon: '🔀', label: 'Router',     message: 'Analyzing query intent & detecting tone...', delay: 1200, result: { tone: 'professional and technical', is_casual: false } },
-    { agent: 'planner',    icon: '📋', label: 'Planner',    message: 'Breaking into 4 targeted research sub-tasks...', delay: 1400, result: { plan: ['Market share analysis', 'Feature comparison', 'Cost model analysis', 'Startup ecosystem review'] } },
-    { agent: 'researcher', icon: '⚡', label: 'Researcher', message: 'Parallel Tavily web search — pass 1 (ThreadPoolExecutor)...', delay: 2000, result: { sources_found: 12 } },
-    { agent: 'retriever',  icon: '🧠', label: 'Retriever',  message: 'Local embedding (384-dim) → Qdrant cosine retrieval...', delay: 1600, result: { docs_retrieved: 8 } },
-    { agent: 'critic',     icon: '🧐', label: 'Critic',     message: 'Hybrid scoring: 60% LLM + 40% objective signals...', delay: 1800, result: { confidence: 0.67, passed: false, critique: 'Missing financial metrics and cost benchmarks. Looping for deeper research.' } },
-    { agent: 'researcher', icon: '⚡', label: 'Researcher', message: 'Parallel web search — pass 2 (deeper research pass)...', delay: 1800, result: { sources_found: 9 } },
-    { agent: 'retriever',  icon: '🧠', label: 'Retriever',  message: 'Re-embedding and retrieving enriched context...', delay: 1400, result: { docs_retrieved: 11 } },
-    { agent: 'critic',     icon: '🧐', label: 'Critic',     message: 'Re-evaluating with enriched data...', delay: 1600, result: { confidence: 0.84, passed: true, critique: 'Comprehensive coverage with verified source citations and financial data. Threshold passed.' } },
-    { agent: 'reporter',   icon: '📝', label: 'Reporter',   message: 'Writing tone-aware markdown report...', delay: 2000, result: { report_length: DEMO_REPORT.length } },
-  ];
-
-  for (const step of steps) {
-    logStart({ ...step, timestamp: Date.now() / 1000 });
-    await sleep(step.delay);
-    logDone({ ...step, timestamp: Date.now() / 1000 });
-    await sleep(250);
-  }
-
-  await sleep(500);
-  onComplete({
-    report: DEMO_REPORT,
-    confidence: 0.84,
-    iterations: 2,
-    tone: 'professional and technical',
-    is_casual: false,
-    score_breakdown: { llm_score: 0.87, objective_score: 0.79 },
-  });
-}
-
-// ─────────────────────────────────────────────────────────
-//  PREMIUM HOVER MICRO-INTERACTIONS (Scramble Effect)
-// ─────────────────────────────────────────────────────────
-(function initNavHover() {
-  // Select navigation links and primary search button
-  document.querySelectorAll('.nav-links a, #run-btn').forEach(link => {
-    const target = link.querySelector('.btn-text') || link;
-    if (!target) return;
-    
-    // Avoid double splitting
-    if (target.classList.contains('split-done')) return;
-    target.classList.add('split-done');
-    
-    const text = target.innerText.trim();
-    if (!text) return;
-    
-    target.innerHTML = text.split('').map(char => {
-      if (char === ' ') return '<span>&nbsp;</span>';
-      return `<span class="hover-char" data-orig="${char}" style="display:inline-block; transition:transform 0.15s var(--ease);">${char}</span>`;
-    }).join('');
-    
-    const chars = target.querySelectorAll('.hover-char');
-    
-    // Character scramble effect on hover!
-    link.addEventListener('mouseenter', () => {
-      chars.forEach((span, idx) => {
-        // Shift letter up slightly
-        gsap.to(span, {
-          y: -2,
-          color: 'var(--cyan-glow)',
-          duration: 0.15,
-          delay: idx * 0.015,
-          ease: 'power1.out',
-          overwrite: 'auto'
-        });
-        
-        const orig = span.dataset.orig;
-        const randoms = ['A','B','C','X','Y','Z','0','1','*','#','@','!','%','&'];
-        
-        // Staggered character scramble
-        setTimeout(() => {
-          span.innerText = randoms[Math.floor(Math.random() * randoms.length)];
-          setTimeout(() => {
-            span.innerText = randoms[Math.floor(Math.random() * randoms.length)];
-            setTimeout(() => {
-              span.innerText = orig;
-            }, 80);
-          }, 60);
-        }, idx * 30);
-      });
-    });
-    
-    link.addEventListener('mouseleave', () => {
-      chars.forEach((span, idx) => {
-        gsap.to(span, {
-          y: 0,
-          color: '',
-          duration: 0.15,
-          delay: idx * 0.01,
-          ease: 'power1.in',
-          overwrite: 'auto'
-        });
-      });
-    });
-  });
-})();
-
-// ─────────────────────────────────────────────────────────
-//  EASTER EGG — Konami Code: ↑↑↓↓←→←→BA
-// ─────────────────────────────────────────────────────────
-(function initKonamiCode() {
-  const CODE = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
-  let pos = 0;
-  document.addEventListener('keydown', function(e) {
-    if (e.key === CODE[pos]) {
-      pos++;
-      if (pos === CODE.length) {
-        pos = 0;
-        document.getElementById('konami-overlay').classList.add('active');
-      }
-    } else {
-      pos = (e.key === CODE[0]) ? 1 : 0;
+    showToast(err.message, 'error');
+    document.getElementById('run-status').textContent = 'ERROR / ABORTED';
+  } finally {
+    isPipelineRunning = false;
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('status-ring').style.animationPlayState = 'paused';
+    if(document.getElementById('run-status').textContent === 'RESEARCHING...') {
+      document.getElementById('run-status').textContent = 'IDLE';
     }
-  });
-})();
+  }
+}
 
-// ─────────────────────────────────────────────────────────
-//  REPORT HISTORY
-// ─────────────────────────────────────────────────────────
-async function loadHistory() {
-  const listEl = document.getElementById('history-list');
-  if (!listEl) return;
-  listEl.innerHTML = '<div style="text-align:center;color:#666;padding:30px;">Loading history...</div>';
+function handleSSEEvent(evType, evData) {
+  if (evType === 'agent_start') {
+    const agent = evData.agent;
+    setNodeState(agent, 'active', 'working…');
+    agentLogs[agent] = { desc: evData.message, log: '…' };
+    openDrawer(agent);
+  }
+  
+  else if (evType === 'agent_done') {
+    const agent = evData.agent;
+    const r = evData.result || {};
+    let desc = agentLogs[agent] ? agentLogs[agent].desc : '';
+    let log = '';
 
+    if (agent === 'router') log = `→ tone: ${r.tone}, casual: ${r.is_casual}`;
+    else if (agent === 'planner') log = `→ ${r.plan?.length || 0} sub-tasks planned`;
+    else if (agent === 'researcher') log = `→ found ${r.sources_found || 0} sources (pass ${r.iteration || 1})`;
+    else if (agent === 'retriever') log = `→ retrieved ${r.docs_retrieved || 0} vectors`;
+    else if (agent === 'critic') {
+      const score = (r.confidence || 0).toFixed(2);
+      if (r.passed) {
+        log = `→ confidence ${score} ✓`;
+        setNodeState(agent, 'done', `confidence ${score} ✓`);
+      } else {
+        log = `→ confidence ${score} ↺ retrying`;
+        setNodeState(agent, 'loop', `confidence ${score} ↺`);
+        // Animate connector backwards if going from critic to researcher
+        const prevConn = document.getElementById('conn-retriever');
+        if(prevConn) prevConn.style.width = '0%';
+        const prevConn2 = document.getElementById('conn-researcher');
+        if(prevConn2) prevConn2.style.width = '0%';
+      }
+      updateConfidenceUI(score, r.iteration);
+    }
+    else if (agent === 'reporter') log = `→ report compiled (${r.report_length} chars)`;
+
+    if (agent !== 'critic' || r.passed) {
+      setNodeState(agent, 'done', r.cached ? 'cached ✓' : 'done');
+    }
+    
+    agentLogs[agent] = { desc: desc, log: log };
+    
+    // update drawer if it's currently open for this agent
+    const drawerTitle = document.getElementById('drawerTitle').textContent;
+    if (drawerTitle.toLowerCase() === AGENT_META[agent].name.toLowerCase()) {
+      openDrawer(agent);
+    }
+  }
+  
+  else if (evType === 'hitl_pause') {
+    currentThreadId = evData.thread_id;
+    document.getElementById('run-status').textContent = 'WAITING FOR APPROVAL';
+    document.getElementById('resume-btn').style.display = 'inline-block';
+    showToast('Human review required. Check drawer and approve.', 'success');
+  }
+  
+  else if (evType === 'report_chunk') {
+    if (document.getElementById('report-viewer-section').style.display === 'none') {
+      document.getElementById('report-viewer-section').style.display = 'block';
+      _streamBuffer = '';
+    }
+    _streamBuffer += evData.chunk;
+    document.getElementById('report-body').innerHTML = md2html(_streamBuffer) + '<span class="stream-cursor"></span>';
+  }
+  
+  else if (evType === 'complete') {
+    document.getElementById('run-status').textContent = 'COMPLETE';
+    document.getElementById('resume-btn').style.display = 'none';
+    if(_streamBuffer) {
+      document.getElementById('report-body').innerHTML = md2html(_streamBuffer); // remove cursor
+    } else if (evData.report) {
+      document.getElementById('report-viewer-section').style.display = 'block';
+      document.getElementById('report-body').innerHTML = md2html(evData.report);
+    }
+    loadArchive();
+  }
+  
+  else if (evType === 'error') {
+    showToast(evData.message || 'Error occurred', 'error');
+    document.getElementById('run-status').textContent = 'ERROR';
+  }
+}
+
+async function resumePipeline() {
+  if (!currentThreadId) return;
+  document.getElementById('resume-btn').style.display = 'none';
+  document.getElementById('run-status').textContent = 'RESEARCHING...';
   try {
-    const resp = await fetch(`${API_BASE}/reports?limit=30`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-    const reports = data.reports || [];
+    const res = await fetch(`${API_BASE}/research/resume`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_id: currentThreadId })
+    });
+    if (!res.ok) throw new Error('Failed to resume');
+    showToast('Generating final report...');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
 
-    if (!reports.length) {
-      listEl.innerHTML = '<div style="text-align:center;color:#666;padding:40px;">No past reports yet. Run a research query to get started!</div>';
+let trendTimeline = [];
+function updateConfidenceUI(scoreStr, iteration) {
+  const score = parseFloat(scoreStr);
+  document.getElementById('conf-val').textContent = score.toFixed(2);
+  
+  // update radial gauge
+  const dash = 238.7 * score; 
+  document.getElementById('conf-svg').style.strokeDashoffset = 238.7 - dash;
+  
+  // update color based on score
+  let color = '#E38080'; // red
+  if (score > 0.75) color = '#7DD3A8'; // green
+  else if (score > 0.5) color = '#FBBF6B'; // amber
+  document.getElementById('conf-svg').style.stroke = color;
+  
+  // update trend bars
+  if (iteration === 1) {
+    trendTimeline = [];
+    document.getElementById('trend-bars').innerHTML = '';
+  }
+  trendTimeline.push({ score, color });
+  
+  const bars = trendTimeline.map(t => {
+    const h = Math.max(10, t.score * 80); // scale height up to 80px
+    return `<div class="trend-bar" style="height:${h}px; background:${t.color};"><span>${t.score.toFixed(2)}</span></div>`;
+  }).join('');
+  document.getElementById('trend-bars').innerHTML = bars;
+}
+
+// ─────────────────────────────────────────────────────────
+// ARCHIVE
+// ─────────────────────────────────────────────────────────
+function timeAgo(ts) {
+  const diff = Date.now()/1000 - ts;
+  if(diff < 60) return 'Just now';
+  if(diff < 3600) return Math.floor(diff/60) + 'm ago';
+  if(diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  return Math.floor(diff/86400) + 'd ago';
+}
+
+async function loadArchive() {
+  const grid = document.getElementById('archiveGrid');
+  grid.innerHTML = '<div class="empty-state">Loading history...</div>';
+  try {
+    const res = await fetch(`${API_BASE}/reports?limit=12`);
+    if (!res.ok) throw new Error('Failed to load reports');
+    const data = await res.json();
+    
+    if(!data.reports || data.reports.length === 0) {
+      grid.innerHTML = '<div class="empty-state">No past runs found.</div>';
       return;
     }
-
-    listEl.innerHTML = reports.map(r => {
-      const date = new Date(r.created_at * 1000).toLocaleString();
-      const conf = ((r.confidence || 0) * 100).toFixed(0);
-      const tone = (r.tone || 'professional');
-      const iters = r.iterations || 0;
-      return `
-        <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1);
-                    border-radius:12px; padding:18px 20px; transition:border-color 0.2s;"
-             onmouseover="this.style.borderColor='rgba(99,211,162,0.4)'"
-             onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
-            <div style="flex:1; min-width:0;">
-              <div style="font-weight:600; font-size:0.95em; color:#e2e8f0; margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                ${escapeHtml(r.query)}
-              </div>
-              <div style="display:flex; gap:12px; font-size:0.78em; color:#94a3b8; flex-wrap:wrap;">
-                <span>📅 ${date}</span>
-                <span>🎯 ${conf}% confidence</span>
-                <span>🔁 ${iters} iteration${iters !== 1 ? 's' : ''}</span>
-                <span>🎨 ${tone}</span>
-              </div>
-            </div>
-            <div style="display:flex; gap:8px; flex-shrink:0;">
-              <button onclick="viewHistoryReport(${r.id})"
-                style="padding:6px 14px; border-radius:6px; background:rgba(99,211,162,0.15);
-                       color:#63d3a2; border:1px solid rgba(99,211,162,0.3); cursor:pointer;
-                       font-size:0.8em; font-weight:600; transition:all 0.2s;"
-                onmouseover="this.style.background='rgba(99,211,162,0.25)'"
-                onmouseout="this.style.background='rgba(99,211,162,0.15)'">View</button>
-              <a href="${API_BASE}/reports/${r.id}/export.pdf" target="_blank"
-                style="padding:6px 14px; border-radius:6px; background:rgba(96,165,250,0.15);
-                       color:#60a5fa; border:1px solid rgba(96,165,250,0.3); cursor:pointer;
-                       font-size:0.8em; font-weight:600; transition:all 0.2s; text-decoration:none;"
-                onmouseover="this.style.background='rgba(96,165,250,0.25)'"
-                onmouseout="this.style.background='rgba(96,165,250,0.15)'">📄 PDF</a>
-            </div>
-          </div>
-        </div>`;
-    }).join('');
-  } catch (e) {
-    listEl.innerHTML = `<div style="text-align:center;color:#f87171;padding:30px;">Failed to load history: ${e.message}</div>`;
+    
+    grid.innerHTML = '';
+    data.reports.forEach(r => {
+      const color = r.confidence > 0.75 ? '#7DD3A8' : r.confidence > 0.5 ? '#FBBF6B' : '#E38080';
+      const dash = 100.5 * r.confidence;
+      const card = document.createElement('div');
+      card.className = 'card';
+      
+      // Provide a clean excerpt of the markdown report text
+      let rawText = (r.report || '').replace(/#|\*|`|>|\[|\]/g, ' ').substring(0, 120);
+      
+      card.innerHTML = `
+        <div class="card-top">
+          <div class="card-title">${r.query}</div>
+          <svg class="mini-gauge" viewBox="0 0 40 40">
+            <circle cx="20" cy="20" r="16" fill="none" stroke="#1F2833" stroke-width="5"/>
+            <circle cx="20" cy="20" r="16" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round"
+              stroke-dasharray="100.5" stroke-dashoffset="${100.5 - dash}" transform="rotate(-90 20 20)"/>
+            <text x="20" y="24" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="${color}">${r.confidence.toFixed(2)}</text>
+          </svg>
+        </div>
+        <div class="card-excerpt">${rawText}...</div>
+        <div class="card-meta"><span>${r.tone}</span><span>${timeAgo(r.created_at)}</span></div>
+      `;
+      // allow clicking card to load report in the viewer
+      card.onclick = () => {
+        document.getElementById('report-viewer-section').style.display = 'block';
+        document.getElementById('report-body').innerHTML = md2html(r.report);
+        document.getElementById('report-viewer-section').scrollIntoView();
+      };
+      grid.appendChild(card);
+    });
+  } catch(e) {
+    grid.innerHTML = `<div class="empty-state">Could not load history: ${e.message}</div>`;
   }
 }
 
-async function viewHistoryReport(id) {
-  try {
-    const resp = await fetch(`${API_BASE}/reports/${id}`);
-    if (!resp.ok) throw new Error(`Report not found`);
-    const r = await resp.json();
+// init
+setTimeout(() => loadArchive(), 500);
 
-    // Scroll to dashboard and render the report there
-    document.getElementById('dashboard').scrollIntoView({ behavior: 'smooth' });
-    setTimeout(() => {
-      const reportBody = document.getElementById('report-body');
-      const placeholder = document.getElementById('report-placeholder');
-      const copyBtn = document.getElementById('copy-btn');
-      const dlBtn = document.getElementById('download-btn');
-      if (reportBody) {
-        reportBody.innerHTML = markdownToHtml(r.report || '');
-        window._currentReport = r.report;
-      }
-      if (placeholder) placeholder.style.display = 'none';
-      if (copyBtn) copyBtn.style.display = 'inline-flex';
-      if (dlBtn) dlBtn.style.display = 'inline-flex';
-      const meta = document.getElementById('report-meta');
-      if (meta) {
-        meta.innerHTML = `<span class="meta-badge">🎯 ${((r.confidence||0)*100).toFixed(0)}% confidence</span>
-          <span class="meta-badge">🔁 ${r.iterations||0} iteration${(r.iterations||0)!==1?'s':''}</span>
-          <span class="meta-badge">🎨 ${r.tone||'professional'}</span>
-          <span class="meta-badge" style="color:#60a5fa;">📂 From History</span>`;
-      }
-      showToast('✅ Report loaded from history');
-    }, 500);
-  } catch (e) {
-    showToast('❌ Failed to load report: ' + e.message);
-  }
-}
-
-function escapeHtml(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+document.getElementById('queryInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') startRealPipeline();
+});

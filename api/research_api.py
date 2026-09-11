@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """
 Multi-Agent Research Assistant — FastAPI Backend
 Streams real-time agent progress via Server-Sent Events (SSE)
@@ -19,7 +20,7 @@ mimetypes.add_type("text/css", ".css")
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -66,7 +67,6 @@ def check_environment():
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["5 per minute"])
 
@@ -247,7 +247,7 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
             from agents.researcher import researcher_node
             from agents.retriever import retriever_node
             from agents.critic import critic_node
-            from agents.reporter import reporter_node, reporter_node_streaming
+            from agents.reporter import reporter_node_streaming
             from core.config import CONFIDENCE_THRESHOLD, MAX_ITERATIONS, AGENT_TIMEOUT
 
             initial_state: ResearchState = {
@@ -263,7 +263,7 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
             }
 
             # Get the compiled graph
-            compiled_graph = await get_graph()
+            await get_graph()
 
             # Start Plain LLM task concurrently
             from langchain_groq import ChatGroq
@@ -717,7 +717,6 @@ async def export_report_pdf(report_id: int):
 @app.get("/reports/versions")
 async def list_report_versions(query: str):
     """Return all report versions for the same query string."""
-    import sqlite3
     from core.report_history import _get_conn
     conn = _get_conn()
     try:
@@ -751,7 +750,6 @@ async def research_multilang_stream(payload: MultiLangRequest, request: Request)
     if lang == "auto":
         # Simple heuristic: use the query as-is; reporter prompt already adapts tone
         prefixed_query = query
-        lang_note = "Respond in the same language as the query above."
     else:
         lang_map = {
             "es": "Spanish", "fr": "French", "de": "German", "hi": "Hindi",
@@ -760,7 +758,6 @@ async def research_multilang_stream(payload: MultiLangRequest, request: Request)
         }
         lang_name = lang_map.get(lang.lower(), lang)
         prefixed_query = f"[Respond entirely in {lang_name}] {query}"
-        lang_note = f"Respond entirely in {lang_name}."
 
     # Inject language note into user_id so reporter can see it via state (simple hack)
     augmented_user_id = f"{payload.user_id}|lang:{lang}"

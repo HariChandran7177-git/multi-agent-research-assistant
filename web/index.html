@@ -1,258 +1,148 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NeuralDesk - Multi-Agent Research Intelligence</title>
-  <meta name="description" content="An autonomous 6-agent AI pipeline that researches any topic, evaluates its own findings, and writes polished reports in real-time." />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100;200;300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
-  <!-- Resolve assets regardless of whether served from /static/ or / -->
-  <script>
-    (function() {
-      var base = document.createElement('base');
-      var path = window.location.pathname;
-      if (path.startsWith('/static/')) {
-        base.href = '/static/';
-      }
-      document.head.appendChild(base);
-    })();
-  </script>
-  <link rel="stylesheet" href="style.css?v=3" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NeuralDesk — Mission Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- Resolve assets regardless of whether served from /static/ or / -->
+<script>
+  (function() {
+    var base = document.createElement('base');
+    var path = window.location.pathname;
+    if (path.startsWith('/static/')) {
+      base.href = '/static/';
+    }
+    document.head.appendChild(base);
+  })();
+</script>
+<link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
-<canvas id="particle-canvas"></canvas>
-<div id="app">
-  <div class="grid-lines-overlay">
-    <div class="line"></div>
-    <div class="line"></div>
-    <div class="line"></div>
-  </div>
 
-  <!-- NAV -->
-  <nav>
-    <div class="nav-logo">Neural<span>Desk</span></div>
-    <ul class="nav-links">
-      <li><a href="#pipeline-section">How it works</a></li>
-      <li><a href="#dashboard">Live Demo</a></li>
-      <li><a href="#history-section" onclick="loadHistory()">History</a></li>
-      <li><a href="https://github.com/HariChandran7177/multi-agent-research-assistant" target="_blank">GitHub</a></li>
-    </ul>
-    <div class="nav-badge">
-      <div class="status-dot"></div>
-      LangGraph v2.0
-    </div>
-  </nav>
-
-  <!-- HERO -->
-  <section id="hero">
-    <div class="orb orb-1"></div>
-    <div class="orb orb-2"></div>
-    <div class="orb orb-3"></div>
-    <div class="hero-eyebrow">
-      <span>🤖</span>
-      6-Agent LangGraph Pipeline - Real-Time Intelligence
-    </div>
-    <h1 class="hero-title">
-      <span class="line-1">Research at the</span>
-      <span class="line-2">Speed of Thought</span>
-    </h1>
-    <p class="hero-sub">An autonomous AI system that routes, plans, searches, retrieves, critiques, and writes — all while you watch the agents think in real-time.</p>
-    <div class="search-container">
-      <div class="search-input-wrap">
-        <textarea id="query-input" placeholder="Ask anything... e.g. 'Explain microservices vs monolith like a senior engineer'" rows="1" spellcheck="false"></textarea>
-        <button id="run-btn" onclick="startResearch()">
-          <div class="loading-spinner"></div>
-          <span class="btn-text">Research</span>
-          <span class="btn-icon">&#8594;</span>
-        </button>
-      </div>
-      <div class="search-hints">
-        <div class="hint-chip" onclick="setQuery('AWS vs GCP for startups in 2025 explain like a senior engineer')">AWS vs GCP</div>
-        <div class="hint-chip" onclick="setQuery('Latest advancements in quantum computing')">Quantum Computing</div>
-        <div class="hint-chip" onclick="setQuery('How does transformer attention mechanism work? Explain simply')">Transformers</div>
-        <div class="hint-chip" onclick="setQuery('Best practices for building production RAG systems in 2025')">RAG Systems</div>
-        <div class="hint-chip" onclick="setQuery('State of AI regulation globally in 2025')">AI Regulation</div>
-      </div>
-    </div>
-    <div class="scroll-indicator"><span>Scroll</span><div class="scroll-line"></div></div>
-  </section>
-
-  <!-- STATS -->
-  <div id="stats-section">
-    <div class="stats-inner">
-      <div class="stat-item"><div class="stat-num">6</div><div class="stat-label">Specialized Agents</div></div>
-      <div class="stat-item"><div class="stat-num">~42s</div><div class="stat-label">Avg Research Time</div></div>
-      <div class="stat-item"><div class="stat-num">0.84</div><div class="stat-label">Avg Confidence Score</div></div>
-      <div class="stat-item"><div class="stat-num">3072</div><div class="stat-label">Embedding Dimensions</div></div>
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="brand-dot"></span>NeuralDesk</div>
+    <div class="nav-links">
+      <a href="#pipeline-section">Pipeline</a>
+      <a href="#confidence-section">Confidence</a>
+      <a href="#archive-section">Archive</a>
+      <a href="https://github.com/HariChandran7177/multi-agent-research-assistant" target="_blank">Docs</a>
     </div>
   </div>
+</nav>
 
-  <!-- PIPELINE SECTION -->
-  <section id="pipeline-section">
-    <div class="section-eyebrow">Architecture</div>
-    <h2 class="section-title">Six agents.<br/>One unified intelligence.</h2>
-    <p class="section-subtitle">Every query triggers a choreographed pipeline - each agent playing a precise role, self-correcting until confident.</p>
-    <div class="pipeline-grid">
-      <div class="agent-card" data-delay="0"><span class="agent-num">01</span><span class="agent-icon">🔀</span><div class="agent-name">Router</div><div class="agent-desc">Intercepts casual queries for instant answers. Detects tone - formal, friendly, technical, ELI5 - from your words.</div><span class="agent-tag">gpt-oss-20b</span></div>
-      <div class="agent-card" data-delay="80"><span class="agent-num">02</span><span class="agent-icon">📋</span><div class="agent-name">Planner</div><div class="agent-desc">Classifies intent into 10 research types. Breaks complex queries into 4-5 targeted sub-tasks for full coverage.</div><span class="agent-tag">gpt-oss-20b</span></div>
-      <div class="agent-card" data-delay="160"><span class="agent-num">03</span><span class="agent-icon">⚡</span><div class="agent-name">Researcher</div><div class="agent-desc">Fires parallel Tavily web searches via ThreadPoolExecutor. Cuts research time from ~60s to under 10s per pass.</div><span class="agent-tag">Tavily API</span></div>
-      <div class="agent-card" data-delay="240"><span class="agent-num">04</span><span class="agent-icon">🧠</span><div class="agent-name">Retriever</div><div class="agent-desc">Embeds all results with SentenceTransformers 384-dim vectors. Retrieves only the most relevant chunks from Qdrant.</div><span class="agent-tag">Qdrant + SentenceTransformers</span></div>
-      <div class="agent-card" data-delay="320"><span class="agent-num">05</span><span class="agent-icon">🧐</span><div class="agent-name">Critic</div><div class="agent-desc">Hybrid scorer: 60% LLM judgment + 40% objective signals. Loops back if confidence is low - up to 3 times.</div><span class="agent-tag">Self-Correcting</span></div>
-      <div class="agent-card" data-delay="400"><span class="agent-num">06</span><span class="agent-icon">📝</span><div class="agent-name">Reporter</div><div class="agent-desc">Writes a fully formatted markdown report, dynamically adapting tone and depth to match your original intent.</div><span class="agent-tag">Tone-Aware</span></div>
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow"><span class="brand-dot" style="width:6px;height:6px;"></span> 6 agents online</div>
+    <h1 class="headline">Watch six agents <em>research, argue,<br>and correct each other</em> — live.</h1>
+    <p class="sub">Ask a question. Route, plan, research, retrieve, critique, and report — every step visible as it happens, not hidden behind a spinner.</p>
+    <div class="query-bar">
+      <input type="text" placeholder="e.g. Compare RAG vs fine-tuning for a support chatbot" id="queryInput">
+      <button id="run-btn" onclick="startRealPipeline()">Research</button>
     </div>
-  </section>
+    <div class="quick-examples">
+      <span onclick="fillQuery(this)">Latest developments in agentic AI</span>
+      <span onclick="fillQuery(this)">Qdrant vs Pinecone for production</span>
+      <span onclick="fillQuery(this)">Explain LangGraph checkpointing</span>
+    </div>
+  </div>
+</header>
 
-  <!-- DASHBOARD -->
-  <section id="dashboard">
-    <div class="dashboard-header">
-      <div>
-        <div class="dashboard-eyebrow">Mission Control</div>
-        <div class="dashboard-title">Research in Progress</div>
-      </div>
-      <button class="toolbar-btn" onclick="resetDashboard()">X New Query</button>
+<section class="section" id="pipeline-section">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="section-label">// MISSION CONTROL</div>
+      <div class="section-title">The pipeline, in the open</div>
+      <div class="section-desc">Every agent's status streams in over SSE. Click a node to see exactly what it found, decided, or flagged — including when the Critic sends work back for another pass.</div>
     </div>
-    <div class="query-display" id="query-display">
-      <span class="query-icon">💬</span>
-      <div>
-        <div class="query-label">Active Research Query</div>
-        <div class="query-text" id="query-display-text"></div>
+
+    <div class="pipeline-shell">
+      <div class="pipeline-toolbar">
+        <div class="status-pill"><span class="ring" id="status-ring"></span> <span id="run-status">IDLE — WAITING FOR QUERY</span></div>
+        <button class="replay-btn" id="resume-btn" onclick="resumePipeline()" style="display:none; border-color:var(--amber); color:var(--amber);">Confirm Report Generation</button>
+      </div>
+
+      <div class="pipeline" id="pipeline"></div>
+
+      <div class="drawer" id="drawer">
+        <div class="drawer-head">
+          <div class="drawer-title" id="drawerTitle">—</div>
+          <div class="drawer-tech" id="drawerTech">—</div>
+        </div>
+        <div class="drawer-body" id="drawerBody">—</div>
+        <div class="drawer-log" id="drawerLog">—</div>
       </div>
     </div>
-    <div class="pipeline-vis" id="pipeline-vis">
-      <div class="pipe-node" id="pnode-router"><div class="pipe-icon-wrap">🔀</div><div class="pipe-label">Router</div></div>
-      <div class="pipe-node" id="pnode-planner"><div class="pipe-icon-wrap">📋</div><div class="pipe-label">Planner</div></div>
-      <div class="pipe-node" id="pnode-researcher"><div class="pipe-icon-wrap">⚡</div><div class="pipe-label">Researcher</div></div>
-      <div class="pipe-node" id="pnode-retriever"><div class="pipe-icon-wrap">🧠</div><div class="pipe-label">Retriever</div></div>
-      <div class="pipe-node" id="pnode-critic"><div class="pipe-icon-wrap">🧐</div><div class="pipe-label">Critic</div></div>
-      <div class="pipe-node" id="pnode-reporter"><div class="pipe-icon-wrap">📝</div><div class="pipe-label">Reporter</div></div>
+  </div>
+</section>
+
+<section class="section" id="confidence-section">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="section-label">// SELF-CORRECTION</div>
+      <div class="section-title">Confidence, not a black box</div>
+      <div class="section-desc">The Critic scores every draft — 60% model judgment, 40% objective signal — and loops back to Research when it's not convinced. You see the whole climb, not just the final number.</div>
     </div>
-    <div class="dashboard-body">
-      <div class="activity-panel">
-        <div class="panel-header">
-          <div class="panel-title">Agent Activity</div>
-          <div class="panel-live-badge"><div class="live-dot" id="live-dot"></div><span id="live-label">LIVE</span></div>
-        </div>
-        <div class="activity-log" id="activity-log"></div>
-        <div class="confidence-meter">
-          <div class="confidence-header">
-            <div class="confidence-label">Confidence Score</div>
-            <div class="confidence-value" id="conf-value">--</div>
-          </div>
-          <div class="confidence-track"><div class="confidence-fill" id="conf-fill"></div></div>
+    <div class="confidence-row">
+      <div class="gauge-block">
+        <svg width="90" height="90" viewBox="0 0 90 90">
+          <circle cx="45" cy="45" r="38" fill="none" stroke="#1F2833" stroke-width="8"/>
+          <circle cx="45" cy="45" r="38" fill="none" stroke="#5EEAD4" stroke-width="8" stroke-linecap="round"
+            stroke-dasharray="238.7" stroke-dashoffset="238.7" transform="rotate(-90 45 45)" id="conf-svg"/>
+        </svg>
+        <div class="gauge-num">
+          <div class="big" id="conf-val">0.00</div>
+          <div style="color:var(--muted)">confidence</div>
         </div>
       </div>
-      <div class="report-panel">
-        <div class="report-toolbar">
-          <div class="report-toolbar-left">
-            <div class="toolbar-dot dot-red"></div>
-            <div class="toolbar-dot dot-yellow"></div>
-            <div class="toolbar-dot dot-green"></div>
-            <div class="report-toolbar-title">report.md</div>
-          </div>
-          <div class="report-toolbar-right">
-            <button class="toolbar-btn" id="copy-btn" onclick="copyReport()" style="display:none">Copy</button>
-            <button class="toolbar-btn" id="download-btn" onclick="downloadReport()" style="display:none">Download</button>
-          </div>
-        </div>
-        <div class="report-placeholder" id="report-placeholder">
-          <div class="placeholder-icon">📄</div>
-          <div class="placeholder-text">Report will appear here<br/>as agents complete their work</div>
-        </div>
-        <div class="report-content" id="report-content">
-          <div class="split-view">
-            <div class="split-col plain-llm-col">
-              <div class="split-header">Plain LLM (No Web Search)</div>
-              <div class="split-body" id="plain-llm-body">
-                <div class="loading-pulse">Thinking...</div>
-              </div>
-            </div>
-            <div class="split-col neuraldesk-col">
-              <div class="split-header">NeuralDesk (6-Agent Pipeline)</div>
-              <div class="report-meta" id="report-meta"></div>
-              <div class="split-body" id="report-body">
-                <div class="loading-pulse">Agents are researching...</div>
-              </div>
-              
-              <!-- HUMAN IN THE LOOP BOX -->
-              <div class="hitl-box" id="hitl-box" style="display:none; margin-top: 15px; padding: 15px; border-radius: 8px;">
-                <div style="font-weight: 600; margin-bottom: 8px; font-size: 0.95em; color: var(--amber);">Human Review Required</div>
-                <div style="font-size: 0.9em; margin-bottom: 12px; color: var(--text-muted);" id="hitl-msg">The agents have finished their research. Do you want them to write the final report now?</div>
-                <button onclick="resumeHitl()" id="hitl-btn" style="padding: 8px 16px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; transition: opacity 0.2s;">Yes, Write Report</button>
-              </div>
-              <!-- NEW DOUBT BOX -->
-              <div class="doubt-box" id="doubt-box" style="display:none; margin-top: 15px; padding: 15px; border-radius: 8px;">
-                <div style="font-weight: 600; margin-bottom: 8px; font-size: 0.9em; color: var(--emerald);">Ask about this report</div>
-                <div style="display: flex; gap: 8px;">
-                  <input type="text" id="doubt-input" placeholder="What does this report say about X?" style="flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-light); background: rgba(0,0,0,0.3); color: white; font-family: inherit;">
-                  <button onclick="askDoubt()" id="doubt-btn" style="padding: 8px 16px; border-radius: 6px; background: var(--emerald); color: black; border: none; font-weight: 600; cursor: pointer; transition: opacity 0.2s;">Ask</button>
-                </div>
-                <div id="doubt-answer" style="margin-top: 10px; font-size: 0.95em; color: var(--text-muted); display: none; line-height: 1.5;"></div>
-              </div>
-            </div>
+      <div class="gauge-block">
+        <div style="flex:1">
+          <div style="font-family:var(--mono); font-size:11.5px; color:var(--muted); margin-bottom:14px;">RETRY TIMELINE</div>
+          <div class="trend" id="trend-bars">
+            <div style="color:var(--muted-2); font-size:12px; height:100%; display:flex; align-items:center;">Waiting for critic loops...</div>
           </div>
         </div>
       </div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <!-- HISTORY SECTION -->
-  <section id="history-section">
-    <div class="tech-inner">
-      <div class="section-eyebrow">Research Archive</div>
-      <h2 class="section-title">Past Reports &amp;<br/><span class="gradient-text">Report History</span></h2>
-      <p class="section-subtitle">All completed research runs are automatically saved. Browse, re-read, or export any past report as a styled PDF.</p>
-      <div style="display:flex; justify-content:flex-end; margin-bottom:16px;">
-        <button class="toolbar-btn" onclick="loadHistory()" style="font-size:0.9em;">⟳ Refresh</button>
-      </div>
-      <div id="history-list" style="display:grid; gap:12px;">
-        <div style="text-align:center; color:#666; padding:40px;">Click <strong>History</strong> in the nav to load your past reports.</div>
-      </div>
+<!-- REPORT VIEWER SECTION -->
+<section class="section" id="report-viewer-section" style="display:none;">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="section-label">// OUTPUT</div>
+      <div class="section-title">Final Report</div>
+      <div class="section-desc">Markdown rendered in real-time as the Reporter streams output.</div>
     </div>
-  </section>
-
-
-  <section id="tech-section">
-    <div class="tech-inner">
-      <div class="section-eyebrow">Tech Stack</div>
-      <h2 class="section-title">Built on the<br/><span class="gradient-text">best infrastructure</span></h2>
-      <div class="tech-grid">
-        <div class="tech-card"><span class="tech-icon">🕸️</span><div class="tech-name">LangGraph</div><div class="tech-role">Stateful agent orchestration</div></div>
-        <div class="tech-card"><span class="tech-icon">⚡</span><div class="tech-name">Groq + GPT-OSS</div><div class="tech-role">Ultra-fast LLM inference</div></div>
-        <div class="tech-card"><span class="tech-icon">🔍</span><div class="tech-name">Tavily API</div><div class="tech-role">Real-time web research</div></div>
-        <div class="tech-card"><span class="tech-icon">🎯</span><div class="tech-name">Qdrant</div><div class="tech-role">Vector database retrieval</div></div>
-        <div class="tech-card"><span class="tech-icon">💎</span><div class="tech-name">SentenceTransformers</div><div class="tech-role">384-dim local embeddings</div></div>
-        <div class="tech-card"><span class="tech-icon">🚀</span><div class="tech-name">FastAPI + SSE</div><div class="tech-role">Real-time event streaming</div></div>
-        <div class="tech-card"><span class="tech-icon">🔄</span><div class="tech-name">Tenacity</div><div class="tech-role">Exponential backoff retries</div></div>
-        <div class="tech-card"><span class="tech-icon">🧵</span><div class="tech-name">ThreadPoolExecutor</div><div class="tech-role">Parallel research tasks</div></div>
-      </div>
+    <div id="report-body" class="report-container">
+       <p style="color:var(--muted);font-style:italic;">Writing report<span class="stream-cursor"></span></p>
     </div>
-  </section>
+  </div>
+</section>
 
-  <!-- FOOTER -->
-  <footer>
-    <div class="footer-inner">
-      <div class="footer-copy">Built with love by <span>Grandhi Hari Chandra</span></div>
-      <ul class="footer-links">
-        <li><a href="https://github.com/HariChandran7177/multi-agent-research-assistant" target="_blank">GitHub</a></li>
-        <li><a href="/docs" target="_blank">API Docs</a></li>
-      </ul>
+<section class="section" id="archive-section">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="section-label">// ARCHIVE</div>
+      <div class="section-title">Past runs</div>
+      <div class="section-desc">Every research run, kept — searchable by topic, sortable by confidence.</div>
     </div>
-  </footer>
-</div>
+    <div class="archive-controls">
+      <div class="chip active">All</div>
+      <div class="chip">High confidence</div>
+    </div>
+    <div class="archive-grid" id="archiveGrid"></div>
+  </div>
+</section>
 
-<div class="toast" id="toast"></div>
+<!-- TOAST -->
+<div id="toast" class="toast"></div>
 
-<!-- EASTER EGG: Konami Code overlay (↑↑↓↓←→←→BA) -->
-<div id="konami-overlay">
-  <div class="konami-title">🔥 You found the secret! 🔥</div>
-  <div class="konami-sub">↑ ↑ ↓ ↓ ← → ← → B A<br/><br/>Congratulations — you have the reflexes of a senior engineer and the curiosity of a great one.<br/>The pipeline is yours. Go build something interesting.</div>
-  <button class="konami-close" onclick="document.getElementById('konami-overlay').classList.remove('active')">[ Close ]</button>
-</div>
+<footer>NeuralDesk — Mission Control</footer>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
 <script src="app.js?v=4"></script>
 </body>
 </html>

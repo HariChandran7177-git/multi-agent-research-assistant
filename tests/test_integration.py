@@ -5,10 +5,9 @@ Integration tests for the FastAPI research API.
 Uses TestClient (no real API calls) to verify routes, rate limits, and report history.
 """
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
-import sys, os
+import os
 
 # Ensure env vars are set before importing the app (avoids sys.exit on check_environment)
 os.environ.setdefault("GROQ_API_KEY", "test-key")
@@ -78,7 +77,7 @@ def test_delete_nonexistent_report_returns_404():
 
 def test_report_history_save_and_retrieve():
     """Saving a report then retrieving it via API should work end-to-end."""
-    from core.report_history import save_report, get_report
+    from core.report_history import save_report
     rid = save_report(
         query="integration test query",
         report="Integration test report content.",

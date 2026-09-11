@@ -7,8 +7,7 @@ import time
 from typing import Dict, Any
 from core.logger import get_logger
 from core.config import (
-    GROQ_API_KEY, QDRANT_URL, QDRANT_API_KEY,
-    TAVILY_MAX_RESULTS
+    GROQ_API_KEY, QDRANT_URL, QDRANT_API_KEY
 )
 
 logger = get_logger(__name__)

@@ -34,7 +34,7 @@ Question: {question}
     except asyncio.TimeoutError:
         logger.error(f"Doubt answering timed out after {AGENT_TIMEOUT}s")
         metrics.end_agent("doubt", error="timeout")
-        return f"Sorry, I timed out while analyzing your question. Please try again."
+        return "Sorry, I timed out while analyzing your question. Please try again."
     except Exception as e:
         logger.error(f"Error in answer_doubt: {e}")
         metrics.end_agent("doubt", error=str(e))

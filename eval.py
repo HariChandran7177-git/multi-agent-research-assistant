@@ -8,7 +8,6 @@ Runs 5 predefined complex queries, records metrics, and saves results to eval_re
 import time
 import asyncio
 from core.graph import build_graph
-from core.state import ResearchState
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -53,7 +52,7 @@ async def run_evaluation():
 
             # We use ainvoke to run the full graph locally
             # This will run until it is interrupted before 'reporter'
-            state_dict = await graph.ainvoke(initial_state, config=config)
+            await graph.ainvoke(initial_state, config=config)
 
             # Since the graph pauses before 'reporter' (HitL), we need to resume it
             final_state = await graph.ainvoke(None, config=config)
@@ -120,7 +119,7 @@ async def run_evaluation():
         avg_conf = total_conf / success_count
         loop_pct = (loop_count / success_count) * 100
 
-        report += f"\n## Summary Statistics\n"
+        report += "\n## Summary Statistics\n"
         report += f"- **Success Rate:** {success_count}/{len(TEST_QUERIES)}\n"
         report += f"- **Average Time:** {avg_time:.2f}s\n"
         report += f"- **Average Confidence:** {avg_conf:.2f}\n"

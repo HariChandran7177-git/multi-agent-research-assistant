@@ -1,4 +1,3 @@
-import pytest
 from agents.critic import critic_node
 
 

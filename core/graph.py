@@ -136,4 +136,5 @@ if __name__ == "__main__":
         # Cleanup
         await close_db_connection()
 
+    import asyncio
     asyncio.run(main())

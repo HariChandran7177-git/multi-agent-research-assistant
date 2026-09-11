@@ -1,4 +1,3 @@
-import os
 import json
 import asyncio
 from dotenv import load_dotenv
@@ -8,7 +7,7 @@ from core.logger import get_logger
 from core.metrics import metrics
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
+from core.config import GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
 
 load_dotenv()
 logger = get_logger(__name__)

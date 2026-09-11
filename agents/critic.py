@@ -3,13 +3,12 @@ import asyncio
 import re
 from langchain_groq import ChatGroq
 from core.state import ResearchState
-import os
 from dotenv import load_dotenv
 from core.metrics import metrics
 from tenacity import retry, stop_after_attempt, wait_exponential
 from core.logger import get_logger
 from core.scorer import calculate_objective_score, calculate_hybrid_score
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT, MAX_ITERATIONS
+from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
 
 load_dotenv()
 

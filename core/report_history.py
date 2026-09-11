@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/report_history.py
 ----------------------
 Stores and retrieves past research reports in a local SQLite database.
@@ -6,10 +6,8 @@ Gives users a history of all their research queries and outputs.
 """
 
 import sqlite3
-import json
 import time
 import os
-from typing import Optional, List, Dict, Any
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -66,12 +64,12 @@ def list_reports(user_id=None, limit=20):
     try:
         if user_id:
             rows = conn.execute(
-                "SELECT id, query, confidence, iterations, tone, user_id, created_at FROM reports WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+                "SELECT id, query, report, confidence, iterations, tone, user_id, created_at FROM reports WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
                 (user_id, limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, query, confidence, iterations, tone, user_id, created_at FROM reports ORDER BY created_at DESC LIMIT ?",
+                "SELECT id, query, report, confidence, iterations, tone, user_id, created_at FROM reports ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]

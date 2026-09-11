@@ -1,6 +1,5 @@
 import logging
 import sys
-import os
 import contextvars
 
 # Global context var to hold the current user query

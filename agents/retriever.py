@@ -10,14 +10,14 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from core.state import ResearchState
 from core.logger import get_logger
 from core.metrics import metrics
-from core.config import MAX_ITERATIONS, AGENT_TIMEOUT, GROQ_MODEL, GROQ_API_KEY
+from core.config import AGENT_TIMEOUT, GROQ_MODEL, GROQ_API_KEY
 from langchain_groq import ChatGroq
 
 load_dotenv()
 logger = get_logger(__name__)
 
 # ── Gemini API Embeddings (no PyTorch, no local model, ~0 MB RAM) ─────────────
-# Uses Google's text-embedding-004 (768-dim) via API.
+# Uses Google's gemini-embedding-2 (3072-dim) via API.
 # Much lighter than SentenceTransformer which requires ~700MB for PyTorch.
 _gemini_embeddings = None
 
@@ -26,10 +26,10 @@ def get_embeddings():
     """Get Gemini API embedding engine (lazy-init, stateless API calls)."""
     global _gemini_embeddings
     if _gemini_embeddings is None:
-        logger.info("Initializing Gemini API embeddings (text-embedding-004, 768-dim)...")
+        logger.info("Initializing Gemini API embeddings (gemini-embedding-2, 3072-dim)...")
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
         _gemini_embeddings = GoogleGenerativeAIEmbeddings(
-            model="text-embedding-004",  # no 'models/' prefix — langchain adds it internally
+            model="gemini-embedding-2",  # no 'models/' prefix — langchain adds it internally
             google_api_key=os.getenv("GOOGLE_API_KEY"),
         )
     return _gemini_embeddings
@@ -38,16 +38,24 @@ def get_embeddings():
 class LazyEmbeddingsWrapper:
     """Thin wrapper that lazily initialises the Gemini embedding client."""
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return get_embeddings().embed_documents(texts)
+        try:
+            return get_embeddings().embed_documents(texts)
+        except Exception as e:
+            logger.error(f"EMBEDDING FAILURE: Failed to embed documents. {str(e)}")
+            raise RuntimeError(f"EMBEDDING FAILURE: {str(e)}")
 
     def embed_query(self, text: str) -> list[float]:
-        return get_embeddings().embed_query(text)
+        try:
+            return get_embeddings().embed_query(text)
+        except Exception as e:
+            logger.error(f"EMBEDDING FAILURE: Failed to embed query. {str(e)}")
+            raise RuntimeError(f"EMBEDDING FAILURE: {str(e)}")
 
 
 embeddings = LazyEmbeddingsWrapper()
 
-# Gemini text-embedding-004 outputs 768-dimensional vectors
-EMBEDDING_DIM = 768
+# Gemini gemini-embedding-2 outputs 3072-dimensional vectors
+EMBEDDING_DIM = 3072
 
 
 
