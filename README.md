@@ -1,9 +1,5 @@
 <div align="center">
 
-  <img src="assets/banner.png" alt="Multi-Agent Research Assistant Banner" width="100%"/>
-
-  <br/>
-
   <h1>🤖 Multi-Agent Research Assistant</h1>
 
   <p><strong>An autonomous, self-correcting AI pipeline that researches any topic, evaluates its own findings, and writes polished reports — powered by LangGraph.</strong></p>
