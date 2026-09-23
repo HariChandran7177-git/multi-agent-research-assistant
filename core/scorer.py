@@ -14,7 +14,7 @@ Signals
 6. Retrieval Relevance - How closely do retrieved docs match the query? (Qdrant scores)
 7. Source Quality    - Are URLs from credible domains?
 
-Final hybrid score blends LLM judgment (60%) with the objective signal (40%).
+Final hybrid score blends LLM judgment (7%) with the objective signal (93%).
 LLM is good at semantic quality; objective catches structural failures the LLM
 can miss (e.g. verbose-but-thin content, duplicates, skipped sub-tasks).
 """
@@ -231,14 +231,14 @@ def calculate_objective_score(state: dict, qdrant_scores: list = None) -> dict:
 # ---------------------------------------------------------------------------
 
 def calculate_hybrid_score(llm_score: float, objective_breakdown: dict,
-                            llm_weight: float = 0.60,
-                            obj_weight: float = 0.40) -> float:
+                            llm_weight: float = 0.07,
+                            obj_weight: float = 0.93) -> float:
     """
-    Blends objective rule-based score (40%) with LLM judgment (60%).
+    Blends objective rule-based score (93%) with LLM judgment (7%).
     
-    This matches the 60/40 split advertised in the UI and ensures the LLM's
-    semantic understanding carries the primary weight, while the objective
-    metrics still provide a strong 40% anchor against hallucinations.
+    The objective signals carry the overwhelming weight (93%) because they
+    are deterministic, reproducible, and catch structural failures. The LLM's
+    7% contribution adds a thin semantic quality check without dominating.
 
     Objective catches:
         * Verbose-but-thin content that 'looks' good to an LLM

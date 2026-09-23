@@ -15,9 +15,9 @@
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-Orchestration-6B46C1?style=for-the-badge&logo=chainlink&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-![Groq](https://img.shields.io/badge/LLM-openai%2Fgpt--oss--20b-orange?style=for-the-badge&logo=meta&logoColor=white)
+![Gemini](https://img.shields.io/badge/Router%20%26%20Planner-Google%20Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)
+![Groq](https://img.shields.io/badge/LLM-Groq%20·%20gpt--oss-orange?style=for-the-badge&logo=meta&logoColor=white)
 ![Qdrant](https://img.shields.io/badge/VectorDB-Qdrant-DC143C?style=for-the-badge)
-![CI](https://img.shields.io/github/actions/workflow/status/HariChandran7177/multi-agent-research-assistant/ci.yml?style=for-the-badge&label=CI)
 
 <br/><br/>
 
@@ -34,15 +34,15 @@
 <table>
   <tr>
     <td>🔀 <strong>Smart Router</strong></td>
-    <td>Intercepts casual queries (e.g., "Hello!") and answers instantly — no wasted API calls. Detects the desired response tone from your query.</td>
+    <td>Intercepts casual queries (e.g., "Hello!") and answers instantly — no wasted API calls. Detects the desired response tone from your query. Powered by <code>gemini-flash-lite-latest</code>.</td>
   </tr>
   <tr>
     <td>📋 <strong>Intelligent Planner</strong></td>
-    <td>Classifies your query into 10 research intent types and breaks it into 4–5 targeted sub-tasks for maximum coverage.</td>
+    <td>Classifies your query into 10 research intent types and breaks it into 4–5 targeted sub-tasks for maximum coverage. Powered by <code>gemini-2.5-flash</code>.</td>
   </tr>
   <tr>
     <td>⚡ <strong>Parallel Research</strong></td>
-    <td>Fires concurrent Tavily web searches using <code>ThreadPoolExecutor</code>. Cuts research time from ~60s to under 10s.</td>
+    <td>Fires concurrent Tavily web searches (up to 5 results per sub-task) using <code>ThreadPoolExecutor</code>. Includes a two-pass LLM pipeline: polish raw findings, then verify against original sources.</td>
   </tr>
   <tr>
     <td>🧠 <strong>Semantic RAG</strong></td>
@@ -50,7 +50,7 @@
   </tr>
   <tr>
     <td>🔁 <strong>Self-Correcting Loop</strong></td>
-    <td>A Critic agent scores research quality using a <strong>hybrid score</strong> (60% LLM + 40% objective signals). If confidence is below <strong>0.8</strong>, it loops back for another research pass — automatically.</td>
+    <td>A Critic agent scores research quality using a <strong>hybrid score</strong> (7% LLM + 93% objective signals). If confidence is below <strong>0.7</strong>, it loops back for another research pass — automatically (up to 3 iterations).</td>
   </tr>
   <tr>
     <td>🎭 <strong>Dynamic Tone</strong></td>
@@ -58,23 +58,19 @@
   </tr>
   <tr>
     <td>🛡️ <strong>Production-Grade Reliability</strong></td>
-    <td>Exponential-backoff retries (multiplier=2, 4–30s) on all LLM/API calls. Qdrant connectivity is verified at startup — if unreachable the app fails loudly rather than silently degrading to in-memory storage. The LangGraph pipeline is compiled once at startup, not per-request.</td>
+    <td>Exponential-backoff retries (multiplier=2, 2–10s) on all LLM/API calls. Qdrant connectivity is verified at startup — if unreachable the app fails loudly rather than silently degrading. The LangGraph pipeline is compiled once at startup, not per-request.</td>
   </tr>
   <tr>
     <td>💾 <strong>Intelligent Caching</strong></td>
-    <td>Repeated queries are served instantly from memory, bypassing API calls entirely and saving costs.</td>
+    <td>Repeated queries are served instantly from cache, bypassing API calls entirely and saving costs.</td>
   </tr>
   <tr>
     <td>🙋 <strong>Doubt Box (Follow-ups)</strong></td>
-    <td>Ask specific questions about a generated report. The system first checks the report, but will also use general knowledge to answer if the report lacks the information.</td>
+    <td>Ask specific questions about a generated report. The system first checks the report; if the report doesn't cover the question, it acknowledges this and answers using general knowledge.</td>
   </tr>
   <tr>
     <td>⏸️ <strong>Human-in-the-Loop (HitL)</strong></td>
-    <td>Execution pauses gracefully before the final report is generated, allowing the user to approve or redirect the research via the frontend or API. Powered by LangGraph's <code>AsyncSqliteSaver</code> checkpointer.</td>
-  </tr>
-  <tr>
-    <td>🔌 <strong>Model Context Protocol (MCP)</strong></td>
-    <td>Ready for deeper integrations to give agents access to local files and external developer tools.</td>
+    <td>Execution pauses before the final report is generated, allowing the user to review intermediate research and approve via the frontend or API. Powered by LangGraph's <code>AsyncSqliteSaver</code> checkpointer.</td>
   </tr>
 </table>
 
@@ -82,7 +78,7 @@
 
 ## 📊 Research Quality Scoring Rubric
 
-Every research run is evaluated by a **hybrid scoring system** (60% LLM + 40% objective signals). The objective score is composed of 6 deterministic signals:
+Every research run is evaluated by a **hybrid scoring system** (7% LLM judgment + 93% objective signals). The objective score is composed of 6 deterministic signals:
 
 | Signal | Weight | How It Works |
 |---|---|---|
@@ -98,10 +94,10 @@ Every research run is evaluated by a **hybrid scoring system** (60% LLM + 40% ob
 objective_score = (retrieval_relevance × 0.35) + (plan_coverage × 0.20) + (content_depth × 0.20)
                + (source_quality × 0.10) + (duplicate_penalty × 0.10) + (diversity × 0.05)
 
-hybrid_score   = (llm_score × 0.60) + (objective_score × 0.40)
+hybrid_score   = (llm_score × 0.07) + (objective_score × 0.93)
 ```
 
-> **Threshold:** A hybrid score of **≥ 0.8** is required to break the self-correction loop. If not met after 3 iterations, the pipeline proceeds with grounding safeguards.
+> **Threshold:** A hybrid score of **≥ 0.7** is required to break the self-correction loop. If not met after 3 iterations, the pipeline proceeds with grounding safeguards.
 
 ---
 
@@ -126,9 +122,9 @@ flowchart TD
         B -- Requires Research --> C[📋 Planner\nBreaks into 4-5 sub-tasks]
         C --> D[🔍 Researcher\nParallel Tavily Web Search]
         D --> E[🗄️ Retriever\nLocal Embed → Qdrant → Top-K Recall]
-        E --> F[🧐 Critic\nHybrid Score: 60% LLM + 40% Objective]
-        F -- score < 0.8 AND iterations < 3 --> D
-        F -- score ≥ 0.8 OR max iterations --> G[📝 Reporter\nTone-Aware Markdown Report]
+        E --> F[🧐 Critic\nHybrid Score: 7% LLM + 93% Objective]
+        F -- score < 0.7 AND iterations < 3 --> D
+        F -- score ≥ 0.7 OR max iterations --> G[📝 Reporter\nTone-Aware Markdown Report]
     end
 
     G --> Z2([✅ Final Report])
@@ -141,13 +137,20 @@ flowchart TD
 | Layer               | Technology                                             | Purpose                                                                            |
 | ------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | **Orchestration**   | [LangGraph](https://github.com/langchain-ai/langgraph) | Stateful agent graph with conditional edges and checkpointing (`AsyncSqliteSaver`) |
-| **LLM Engine**      | [Groq](https://groq.com) · `openai/gpt-oss-20b`        | Main models for Reporter, Doubt, Planner, Researcher and Critic agents             |
-| **Router LLM**      | [Groq](https://groq.com) · `groq/compound-mini`        | Lightweight, fast routing decisions                                                |
-| **Web Search**      | [Tavily API](https://tavily.com) (Advanced Depth)      | Real-time web research                                                             |
-| **Embeddings**      | SentenceTransformers · `all-MiniLM-L6-v2`              | 384-dimensional local semantic vectors                                             |
-| **Vector Database** | [Qdrant Cloud](https://qdrant.tech)                    | Cosine-similarity retrieval with session filtering                                 |
-| **Retry Logic**     | [Tenacity](https://tenacity.readthedocs.io)            | Exponential backoff on all external calls                                          |
+| **Router LLM**      | [Google Gemini](https://ai.google.dev) · `gemini-flash-lite-latest` | Lightweight, fast routing and tone detection                                       |
+| **Planner LLM**     | [Google Gemini](https://ai.google.dev) · `gemini-2.5-flash` | Task decomposition into 4-5 research sub-tasks                                    |
+| **Researcher LLM**  | [Groq](https://groq.com) · `openai/gpt-oss-20b`       | Research polishing and verification                                                |
+| **Critic LLM**      | [Groq](https://groq.com) · `openai/gpt-oss-20b`       | Quality evaluation and hybrid scoring                                              |
+| **Reporter LLM**    | [Groq](https://groq.com) · `openai/gpt-oss-120b`      | Tone-aware final report generation and streaming                                   |
+| **Doubt LLM**       | [Groq](https://groq.com) · `openai/gpt-oss-120b`      | Follow-up question answering                                                       |
+| **Web Search**      | [Tavily API](https://tavily.com) (Advanced Depth, 5 results/task) | Real-time web research                                                 |
+| **Embeddings**      | SentenceTransformers · `all-MiniLM-L6-v2`              | 384-dimensional local semantic vectors (zero API cost)                             |
+| **Vector Database** | [Qdrant Cloud](https://qdrant.tech)                    | Cosine-similarity retrieval with session + user filtering                          |
+| **Backend**         | [FastAPI](https://fastapi.tiangolo.com) + SSE           | Real-time agent progress streaming to frontend                                     |
+| **Frontend**        | Vanilla HTML/CSS/JS                                    | "Mission Control" UI with live pipeline visualization                              |
+| **Retry Logic**     | [Tenacity](https://tenacity.readthedocs.io)            | Exponential backoff (multiplier=2, 2–10s) on all external calls                    |
 | **Concurrency**     | Python `ThreadPoolExecutor`                            | Parallel research sub-tasks                                                        |
+| **Deployment**      | [Render](https://render.com)                           | Auto-deploy with health checks                                                     |
 
 ---
 
@@ -179,8 +182,6 @@ The honest answer? **It depends on your workload** — but the decision is far l
 
 > _The senior engineer's take: AWS is the safe default. GCP is the smart choice if data or ML is core to your product._
 
-📄 [Read the full report →](sample_outputs/aws_vs_gcp_report.md)
-
 </details>
 
 ---
@@ -191,9 +192,10 @@ The honest answer? **It depends on your workload** — but the decision is far l
 
 - Python 3.11+
 - Free API accounts (all have generous free tiers):
-  - [Groq](https://console.groq.com) — LLM inference
+  - [Groq](https://console.groq.com) — LLM inference (Researcher, Critic, Reporter, Doubt)
+  - [Google AI Studio](https://aistudio.google.com) — Gemini models (Router, Planner)
   - [Tavily](https://app.tavily.com) — Web search
-  - [Qdrant Cloud](https://cloud.qdrant.io) — Vector database (or runs in-memory)
+  - [Qdrant Cloud](https://cloud.qdrant.io) — Vector database
 
 ### Installation
 
@@ -219,12 +221,13 @@ cp .env.example .env
 
 ```env
 GROQ_API_KEY=your_groq_key          # https://console.groq.com
+GOOGLE_API_KEY=your_gemini_key      # https://aistudio.google.com
 TAVILY_API_KEY=your_tavily_key      # https://app.tavily.com
-QDRANT_URL=your_qdrant_url          # https://cloud.qdrant.io (or leave as localhost)
+QDRANT_URL=your_qdrant_url          # https://cloud.qdrant.io (or http://localhost:6333)
 QDRANT_API_KEY=your_qdrant_key
 ```
 
-### Run
+### Run (CLI)
 
 ```bash
 # Research any topic
@@ -233,6 +236,15 @@ python main.py "What are the key tradeoffs of microservices vs monolith architec
 # Tone detection — the report will adapt!
 python main.py "Explain how transformer attention works like I'm 5 years old"
 python main.py "Write a professional brief on the current state of AI regulation"
+```
+
+### Run (Web UI)
+
+```bash
+# Start the FastAPI server
+uvicorn api.research_api:app --host 0.0.0.0 --port 8000
+
+# Open http://localhost:8000 in your browser
 ```
 
 **Expected output (in ~30–60 seconds):**
@@ -257,42 +269,38 @@ FINAL REPORT
 ```text
 multi-agent-research-assistant/
 ├── agents/
-│   ├── router.py        # 🔀 Gatekeeper: casual vs research, tone detection
-│   ├── planner.py       # 📋 Breaks complex queries into 4-5 research sub-tasks
-│   ├── researcher.py    # 🔍 Parallel Tavily web search (ThreadPoolExecutor)
-│   ├── retriever.py     # 🗄️ Local Embeddings + Qdrant vector retrieval
-│   ├── critic.py        # 🧐 Hybrid quality scorer (LLM + objective signals)
-│   └── reporter.py      # 📝 Tone-aware markdown report writer (w/ strict grounding)
+│   ├── router.py        # 🔀 Gatekeeper: casual vs research, tone detection (Gemini)
+│   ├── planner.py       # 📋 Breaks complex queries into 4-5 research sub-tasks (Gemini)
+│   ├── researcher.py    # 🔍 Parallel Tavily web search + polish + verify (Groq)
+│   ├── retriever.py     # 🗄️ Local Embeddings (SentenceTransformer) + Qdrant retrieval
+│   ├── critic.py        # 🧐 Hybrid quality scorer: 7% LLM + 93% objective (Groq)
+│   ├── reporter.py      # 📝 Tone-aware markdown report writer with streaming (Groq)
+│   └── doubt.py         # 🙋 Follow-up question answering on generated reports (Groq)
 ├── core/
 │   ├── cache.py         # Caching mechanism for API cost savings
-│   ├── config.py        # Environment variables and configuration
+│   ├── config.py        # Environment variables and all configuration constants
 │   ├── graph.py         # LangGraph nodes, edges & conditional routing (AsyncSqliteSaver)
-│   ├── health.py        # System health and Qdrant startup verification
+│   ├── health.py        # System health checks and Qdrant startup verification
 │   ├── logger.py        # Structured console logging
-│   ├── metrics.py       # Observability and token tracking
-│   ├── report_history.py # SQLite database for archiving reports
-│   ├── scorer.py        # Objective scoring signals (Qdrant, length, sources)
+│   ├── metrics.py       # Observability: token tracking, cost estimation, agent timing
+│   ├── report_history.py # SQLite database for archiving past reports
+│   ├── scorer.py        # Objective scoring signals (Qdrant, length, sources, diversity)
 │   └── state.py         # ResearchState TypedDict — shared agent memory
-├── .github/
-│   ├── workflows/ci.yml # GitHub Actions: pytest + ruff on every push
-│   └── ISSUE_TEMPLATE/  # Bug report & feature request templates
-├── sample_outputs/      # Real pipeline-generated reports
-├── tests/               # Unit & integration tests
+├── api/
+│   ├── main.py          # Minimal FastAPI health check (legacy)
+│   └── research_api.py  # Full FastAPI backend with SSE streaming & HITL
+├── web/
+│   ├── index.html       # "NeuralDesk — Mission Control" frontend
+│   ├── style.css        # Dark-mode glassmorphism UI styling
+│   └── app.js           # SSE client, pipeline visualization, markdown parser
 ├── assets/banner.png    # Repo banner
-├── main.py              # CLI entry point
+├── main.py              # CLI entry point with follow-up doubt loop
 ├── .env.example         # API key template
-└── LICENSE
+├── requirements.txt     # Python dependencies
+├── render.yaml          # Render.com deployment config
+├── Dockerfile           # Container deployment
+└── LICENSE              # MIT License
 ```
-
----
-
-## 🧪 Running Tests
-
-```bash
-pytest tests/ -v
-```
-
-Tests are designed to mock all external APIs (Groq, Tavily, Qdrant) — no real API keys needed to run the test suite.
 
 ---
 
@@ -305,7 +313,7 @@ Tests are designed to mock all external APIs (Groq, Tavily, Qdrant) — no real 
 - [x] **Production hardening** — Qdrant startup check, single graph compilation, longer retry backoff
 - [x] **Human-in-the-loop** — Pause the loop and let the user steer research direction via `AsyncSqliteSaver` checkpointer.
 - [x] **Caching mechanism** — Query caching to bypass API calls on repeated questions.
-- [x] **Doubt resolution** — Grounded follow-up answers on generated reports.
+- [x] **Doubt resolution** — Follow-up answers on generated reports (report-first, then general knowledge).
 
 ### Future Work
 
