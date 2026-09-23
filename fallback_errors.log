@@ -40,3 +40,59 @@
 2026-09-11 21:23:25 | WARNING  | core.scorer | [Scorer] No Qdrant scores available — using penalty default 0.4
 2026-09-11 22:03:31 | WARNING  | agents.retriever | Collection 'research_docs' has dim=768 but we need dim=3072. Deleting and recreating...
 2026-09-11 22:08:45 | WARNING  | api.research_api | HITL timeout for thread f936745e-11f4-4f6e-ae7c-0cc76562a903
+2026-09-21 16:33:16 | WARNING  | agents.retriever | [Query: explain about the ai voice agents] Collection 'research_docs' has dim=3072 but we need dim=384. Deleting and recreating...
+2026-09-22 13:57:28 | WARNING  | agents.router | [Query: hello] Router LLM failed (RetryError[<Future at 0x16ed52acb90 state=finished raised NotFoundError>]), using heuristic tone detection.
+2026-09-22 13:59:11 | WARNING  | agents.retriever | [Query: hello] Qdrant upsert failed after retries: RetryError[<Future at 0x16e81364d10 state=finished raised UnexpectedResponse>]
+2026-09-22 13:59:11 | WARNING  | agents.retriever | [Query: hello] Qdrant unavailable, using fallback: upsert error: RetryError[<Future at 0x16e81364d10 state=finished raised UnexpectedResponse>]
+2026-09-22 13:59:12 | WARNING  | core.scorer | [Query: hello] [Scorer] No Qdrant scores available — using penalty default 0.4
+2026-09-22 13:59:21 | WARNING  | agents.retriever | [Query: hello] Qdrant upsert failed after retries: RetryError[<Future at 0x16e815d48c0 state=finished raised UnexpectedResponse>]
+2026-09-22 13:59:21 | WARNING  | agents.retriever | [Query: hello] Qdrant unavailable, using fallback: upsert error: RetryError[<Future at 0x16e815d48c0 state=finished raised UnexpectedResponse>]
+2026-09-22 13:59:22 | WARNING  | core.scorer | [Query: hello] [Scorer] No Qdrant scores available — using penalty default 0.4
+2026-09-22 13:59:31 | WARNING  | agents.retriever | [Query: hello] Qdrant upsert failed after retries: RetryError[<Future at 0x16e813597e0 state=finished raised UnexpectedResponse>]
+2026-09-22 13:59:31 | WARNING  | agents.retriever | [Query: hello] Qdrant unavailable, using fallback: upsert error: RetryError[<Future at 0x16e813597e0 state=finished raised UnexpectedResponse>]
+2026-09-22 13:59:32 | WARNING  | core.scorer | [Query: hello] [Scorer] No Qdrant scores available — using penalty default 0.4
+2026-09-22 13:59:32 | WARNING  | agents.reporter | [Query: hello] No research data at all (confidence=0.4) — returning honest limited response
+2026-09-22 14:08:53 | WARNING  | agents.router | [Query: explain about the ai voice agents] Router LLM failed (RetryError[<Future at 0x118367bcb90 state=finished raised NotFoundError>]), using heuristic tone detection.
+2026-09-22 14:09:39 | WARNING  | agents.retriever | [Query: explain about the ai voice agents] LLM returned no valid indices. Falling back to first items.
+2026-09-22 14:09:48 | WARNING  | agents.retriever | [Query: explain about the ai voice agents] LLM returned no valid indices. Falling back to first items.
+2026-09-22 14:31:10 | WARNING  | agents.router | [Query: explain about the ai voice agents] Router LLM failed (RetryError[<Future at 0x2ae006ccb90 state=finished raised NotFoundError>]), using heuristic tone detection.
+2026-09-22 15:20:08 | WARNING  | agents.router | [Query: explain about the new technologies in 2026] Router LLM failed (RetryError[<Future at 0x2a9091557f0 state=finished raised ChatGoogleGenerativeAIError>]), using heuristic tone detection.
+2026-09-22 15:32:09 | WARNING  | agents.router | [Query: explain about the new technologies in 2026] Router LLM failed ('list' object has no attribute 'strip'), using heuristic tone detection.
+2026-09-22 16:37:42 | ERROR    | agents.researcher | [Query: explain about the new technologies in 2026] Research polishing failed: RetryError[<Future at 0x18aff9f5ef0 state=finished raised APIStatusError>]
+2026-09-22 16:37:51 | ERROR    | agents.researcher | [Query: explain about the new technologies in 2026] Research verification failed: RetryError[<Future at 0x18aff8ea990 state=finished raised APIStatusError>]
+2026-09-22 16:38:45 | ERROR    | agents.researcher | [Query: explain about the new technologies in 2026] Research polishing failed: RetryError[<Future at 0x18ab41cde50 state=finished raised APIStatusError>]
+2026-09-22 16:38:53 | ERROR    | agents.researcher | [Query: explain about the new technologies in 2026] Research verification failed: RetryError[<Future at 0x18ab41f07d0 state=finished raised APIStatusError>]
+2026-09-22 16:39:11 | ERROR    | agents.researcher | [Query: explain about the new technologies in 2026] Research polishing failed: RetryError[<Future at 0x18ab3cf4ad0 state=finished raised APIStatusError>]
+2026-09-22 16:39:19 | ERROR    | agents.researcher | [Query: explain about the new technologies in 2026] Research verification failed: RetryError[<Future at 0x18ab3cf7250 state=finished raised APIStatusError>]
+2026-09-22 16:44:16 | WARNING  | __main__ | Truncating raw research from 16691 to 12000 characters to fit context window.
+2026-09-22 16:45:01 | WARNING  | __main__ | Truncating raw research from 17384 to 12000 characters to fit context window.
+2026-09-22 16:51:15 | WARNING  | agents.researcher | [Query: what is jev the first sytem one model ai model] Truncating raw research from 44284 to 12000 characters to fit context window.
+2026-09-22 16:52:16 | WARNING  | agents.researcher | [Query: what is jev the first sytem one model ai model] Truncating raw research from 43194 to 12000 characters to fit context window.
+2026-09-22 16:53:39 | WARNING  | agents.researcher | [Query: what is jev the first sytem one model ai model] Truncating raw research from 46707 to 12000 characters to fit context window.
+2026-09-22 16:54:59 | WARNING  | agents.reporter | [Query: what is jev the first sytem one model ai model] Low confidence research (confidence=0.247) — writing report with strict grounding
+2026-09-23 14:05:59 | WARNING  | agents.researcher | [Query: give me good roadmap fro the delivery app in the r...] Truncating raw research from 40023 to 12000 characters to fit context window.
+2026-09-23 14:06:08 | WARNING  | agents.researcher | [Query: give me good roadmap fro the delivery app in the r...] Verification returned an empty result. Falling back to the polished result.
+2026-09-23 14:08:09 | ERROR    | agents.retriever | [Query: give me good roadmap fro the delivery app in the r...] Embedding timed out after 120s
+2026-09-23 14:08:09 | WARNING  | agents.retriever | [Query: give me good roadmap fro the delivery app in the r...] Qdrant unavailable, using fallback: embedding_timeout
+2026-09-23 14:08:10 | WARNING  | core.scorer | [Query: give me good roadmap fro the delivery app in the r...] [Scorer] No Qdrant scores available — using penalty default 0.4
+2026-09-23 14:08:10 | WARNING  | agents.researcher | [Query: give me good roadmap fro the delivery app in the r...] Truncating raw research from 40023 to 12000 characters to fit context window.
+2026-09-23 14:08:46 | WARNING  | agents.researcher | [Query: give me good roadmap fro the delivery app in the r...] Verification returned an empty result. Falling back to the polished result.
+2026-09-23 14:18:55 | WARNING  | agents.researcher | [Query: Explain about the Generative AI] Truncating raw research from 50636 to 12000 characters to fit context window.
+2026-09-23 14:19:00 | WARNING  | agents.researcher | [Query: Explain about the Generative AI] Verification returned an empty result. Falling back to the polished result.
+2026-09-23 14:21:24 | WARNING  | agents.researcher | [Query: Explain about the Agent AI] Truncating raw research from 47239 to 12000 characters to fit context window.
+2026-09-23 14:35:51 | WARNING  | __main__ | Truncating raw research from 20541 to 12000 characters to fit context window.
+2026-09-23 14:47:53 | WARNING  | __main__ | Truncating raw research from 20052 to 12000 characters to fit context window.
+2026-09-23 14:54:38 | WARNING  | __main__ | Truncating raw research from 19328 to 12000 characters to fit context window.
+2026-09-23 14:56:25 | WARNING  | agents.researcher | [Query: Explain about the new age ai in 2026] Truncating raw research from 38530 to 12000 characters to fit context window.
+2026-09-23 15:09:28 | WARNING  | agents.researcher | [Query: What is the current state of solid state batteries...] Truncating raw research from 48800 to 30000 characters to fit context window.
+2026-09-23 15:10:29 | WARNING  | agents.researcher | [Query: What is the current state of solid state batteries...] Verification returned an empty result. Falling back to the polished result.
+2026-09-23 17:04:32 | WARNING  | agents.researcher | Truncating raw research from 54410 to 20000 characters to fit context window.
+2026-09-23 17:05:16 | WARNING  | agents.researcher | Verification returned an empty result. Falling back to the polished result.
+2026-09-23 17:12:13 | WARNING  | agents.researcher | Truncating raw research from 42424 to 20000 characters to fit context window.
+2026-09-23 17:12:54 | WARNING  | agents.researcher | Verification returned an empty result. Falling back to the polished result.
+2026-09-23 17:20:31 | WARNING  | agents.researcher | Truncating raw research from 45347 to 20000 characters to fit context window.
+2026-09-23 17:23:23 | WARNING  | agents.researcher | Truncating raw research from 45758 to 20000 characters to fit context window.
+2026-09-23 17:24:05 | WARNING  | agents.researcher | Verification returned an empty result. Falling back to the polished result.
+2026-09-23 17:24:38 | WARNING  | agents.researcher | Truncating raw research from 45758 to 20000 characters to fit context window.
+2026-09-23 17:26:21 | WARNING  | agents.researcher | Truncating raw research from 45758 to 20000 characters to fit context window.
+2026-09-23 17:27:49 | WARNING  | agents.researcher | Verification returned an empty result. Falling back to the polished result.

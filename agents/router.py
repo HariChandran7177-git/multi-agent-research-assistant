@@ -1,29 +1,31 @@
 import json
 import asyncio
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from core.state import ResearchState
 from core.logger import get_logger
 from core.metrics import metrics
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from core.config import GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
+from core.config import GEMINI_ROUTER_MODEL, GEMINI_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
 
 load_dotenv()
 logger = get_logger(__name__)
 
-# Use groq/compound-mini for fast routing decisions
-llm = ChatGroq(
-    model="groq/compound-mini",
-    api_key=GROQ_API_KEY,
+# Use GEMINI_ROUTER_MODEL for fast routing decisions
+llm = ChatGoogleGenerativeAI(
+    model=GEMINI_ROUTER_MODEL,
+    google_api_key=GEMINI_API_KEY,
     temperature=0.1,
 )
 
 ROUTER_PROMPT = """You are an intelligent query router and tone detector.
 
 TASK 1 — Is this a research query or a casual chat?
-- CASUAL: greetings, jokes, "how are you", "what's 2+2", simple facts you know instantly
-- RESEARCH: anything requiring web search, current events, comparisons, analysis, "how to", technical deep-dives
+- CASUAL: greetings, jokes, "how are you", "what's 2+2", simple facts you know instantly.
+- RESEARCH: anything requiring web search, current events, comparisons, analysis, "how to", technical deep-dives, or future predictions.
+
+CRITICAL RULE: Default to RESEARCH (`is_casual: false`) for almost all queries. ONLY use CASUAL for simple greetings like "hello" or "how are you". If the user is asking a question, asking for advice, or asking for an explanation, it MUST be RESEARCH. Do not try to answer it yourself!
 
 TASK 2 — Detect the exact writing tone from the query's wording:
 - If the query says "explain like I'm 5" or "ELI5" → tone = "ELI5 — explain like I am 5 years old, use simple analogies"
@@ -37,13 +39,15 @@ TASK 2 — Detect the exact writing tone from the query's wording:
 
 Original query: "{query}"
 
-Return ONLY a valid JSON object, no markdown:
+Return ONLY a valid JSON object, no markdown, no conversational text:
 {{"is_casual": <true|false>, "response": "<if casual: your answer, else empty string>", "tone": "<detected tone string>"}}
 """
+
 
 @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX))
 def invoke_with_retry(llm, prompt):
     return llm.invoke(prompt)
+
 
 def _detect_tone_heuristic(query: str) -> str:
     """Fast keyword-based fallback tone detector if LLM fails."""
@@ -62,6 +66,7 @@ def _detect_tone_heuristic(query: str) -> str:
         return "professional and informative"
     return "professional and informative"
 
+
 async def router_node(state: ResearchState) -> ResearchState:
     """Async router node with timeout and metrics."""
     loop = asyncio.get_event_loop()
@@ -71,10 +76,14 @@ async def router_node(state: ResearchState) -> ResearchState:
     try:
         # Timeout protection
         response = await asyncio.wait_for(
-            loop.run_in_executor(None, invoke_with_retry, llm, ROUTER_PROMPT.format(query=query)),
+            loop.run_in_executor(None, invoke_with_retry,
+                                 llm, ROUTER_PROMPT.format(query=query)),
             timeout=AGENT_TIMEOUT
         )
-        content = response.content.strip()
+        content = response.content
+        if isinstance(content, list):
+            content = " ".join([block.get("text", "") if isinstance(block, dict) else str(block) for block in content])
+        content = str(content).strip()
         # Strip markdown code blocks if present
         if content.startswith("```json"):
             content = content[7:].strip()
@@ -85,6 +94,11 @@ async def router_node(state: ResearchState) -> ResearchState:
             if content.endswith("```"):
                 content = content[:-3].strip()
 
+        import re
+        match = re.search(r'\{.*\}', content, re.DOTALL)
+        if match:
+            content = match.group(0)
+
         parsed = json.loads(content)
         state["is_casual"] = parsed.get("is_casual", False)
         state["tone"] = parsed.get("tone") or _detect_tone_heuristic(query)
@@ -92,20 +106,24 @@ async def router_node(state: ResearchState) -> ResearchState:
 
         if state["is_casual"]:
             logger.info("Query classified as casual. Bypassing research.")
-            state["final_report"] = parsed.get("response", "I'm here to help! What's on your mind?")
+            state["final_report"] = parsed.get(
+                "response", "I'm here to help! What's on your mind?")
         else:
             logger.info("Query requires research. Routing to Planner.")
 
         # Record metrics
-        metrics.end_agent("router", input_tokens=len(query), output_tokens=len(content))
+        metrics.end_agent("router", input_tokens=len(
+            query), output_tokens=len(content))
 
     except asyncio.TimeoutError:
-        logger.warning(f"Router timeout after {AGENT_TIMEOUT}s, using heuristic")
+        logger.warning(
+            f"Router timeout after {AGENT_TIMEOUT}s, using heuristic")
         state["is_casual"] = False
         state["tone"] = _detect_tone_heuristic(query)
         metrics.end_agent("router", error="timeout")
     except Exception as e:
-        logger.warning(f"Router LLM failed ({e}), using heuristic tone detection.")
+        logger.warning(
+            f"Router LLM failed ({e}), using heuristic tone detection.")
         state["is_casual"] = False
         state["tone"] = _detect_tone_heuristic(query)
         metrics.end_agent("router", error=str(e))
@@ -127,4 +145,3 @@ if __name__ == "__main__":
                             "iteration_count": 0, "final_report": ""}
         r = asyncio.run(router_node(s))
         print(f"Q: {q!r}\n  → casual={r['is_casual']}, tone={r['tone']!r}\n")
-

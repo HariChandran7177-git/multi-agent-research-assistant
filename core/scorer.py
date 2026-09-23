@@ -231,15 +231,14 @@ def calculate_objective_score(state: dict, qdrant_scores: list = None) -> dict:
 # ---------------------------------------------------------------------------
 
 def calculate_hybrid_score(llm_score: float, objective_breakdown: dict,
-                            llm_weight: float = 0.07,
-                            obj_weight: float = 0.93) -> float:
+                            llm_weight: float = 0.60,
+                            obj_weight: float = 0.40) -> float:
     """
-    Blends objective rule-based score (93%) with a small LLM sanity-check (7%).
-
-    The objective signals dominate because they are deterministic and cannot be
-    fooled by fluent-but-shallow LLM output. The LLM contribution is kept at
-    just 7% — enough to act as a mild semantic tiebreaker on edge cases, but
-    not enough to override hard structural failures detected by the scorer.
+    Blends objective rule-based score (40%) with LLM judgment (60%).
+    
+    This matches the 60/40 split advertised in the UI and ensures the LLM's
+    semantic understanding carries the primary weight, while the objective
+    metrics still provide a strong 40% anchor against hallucinations.
 
     Objective catches:
         * Verbose-but-thin content that 'looks' good to an LLM

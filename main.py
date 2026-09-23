@@ -8,6 +8,9 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
+import warnings
+warnings.filterwarnings("ignore", message=".*Direct use of automatic function calling.*")
+
 from core.graph import build_graph
 from core.state import ResearchState
 from agents.doubt import answer_doubt
@@ -47,51 +50,110 @@ async def run_pipeline(query: str) -> str:
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
 
     # The graph has interrupt_before=["reporter"], so the first ainvoke pauses
-    await graph.ainvoke(initial_state, config=config)
+    state_after_research = await graph.ainvoke(initial_state, config=config)
     
-    # Resume the graph to actually run the reporter
-    final_state = await graph.ainvoke(None, config=config)
+    # Check if the graph paused at reporter. If not, it means the router bypassed research.
+    state_snapshot = await graph.aget_state(config)
+    next_nodes = state_snapshot.next
     
-    return final_state.get("final_report", "No report generated.")
+    if "reporter" not in next_nodes:
+        # Bypassed research (casual query)
+        print("\n" + "=" * 50)
+        print("FINAL REPORT")
+        print("=" * 50 + "\n")
+        report = state_after_research.get("final_report", "No report generated.")
+        print(report)
+        return report
+    
+    # Resume the graph to actually run the reporter and stream tokens
+    final_report = ""
+    header_printed = False
+    
+    async for event in graph.astream_events(None, config=config, version="v2"):
+        if event["event"] == "on_chat_model_stream":
+            chunk = event["data"]["chunk"]
+            if hasattr(chunk, "content") and isinstance(chunk.content, str):
+                if not header_printed:
+                    print("\n" + "=" * 50)
+                    print("FINAL REPORT")
+                    print("=" * 50 + "\n")
+                    header_printed = True
+                print(chunk.content, end="", flush=True)
+                final_report += chunk.content
+    
+    if not final_report:
+        # If streaming didn't catch anything, fetch and print from final state
+        final_state = await graph.aget_state(config)
+        final_report = final_state.values.get("final_report", "No report generated.")
+        
+        if not header_printed:
+            print("\n" + "=" * 50)
+            print("FINAL REPORT")
+            print("=" * 50 + "\n")
+            
+        print(final_report)
+    else:
+        print()
+    
+    return final_report
 
 
 async def main():
-    if len(sys.argv) < 2:
-        query = input("Please type the question you want to research here: ")
-        if not query.strip():
-            print("No question provided. Exiting.")
-            sys.exit(1)
-    else:
+    from core.report_history import save_report
+
+    if len(sys.argv) >= 2:
         query = " ".join(sys.argv[1:])
-    print(f"\nResearching: {query}\n")
-    print("Running pipeline... (this may take 30-60 seconds)\n")
+    else:
+        query = None
 
-    report = await run_pipeline(query)
-
-    print("\n" + "=" * 50)
-    print("FINAL REPORT")
-    print("=" * 50 + "\n")
-    print(report)
-
-    print("\n" + "=" * 50)
-    print("FOLLOW-UP QUESTIONS")
-    print("=" * 50)
     while True:
-        try:
-            follow_up = input("\nDo you have any follow-up questions about this report? (type 'exit' to quit): ")
-            if follow_up.lower().strip() in ['exit', 'quit', 'q', 'no']:
+        if not query:
+            query = input("Please type the question you want to research here (type 'exit' to quit): ")
+            if query.lower().strip() in ['exit', 'quit']:
                 print("Exiting. Have a great day!")
                 break
-            if not follow_up.strip():
-                continue
-            
-            print("\nThinking...")
-            answer = await answer_doubt(report, follow_up)
-            print(f"\nAnswer: {answer}")
+            if not query.strip():
+                print("No question provided. Exiting.")
+                sys.exit(1)
+
+        print(f"\nResearching: {query}\n")
+        print("Running pipeline... (this may take 30-60 seconds)\n")
+
+        report = await run_pipeline(query)
+
+        print("\n" + "=" * 50)
+        print("FOLLOW-UP QUESTIONS")
+        print("=" * 50)
+        while True:
+            try:
+                follow_up = input("\nDo you have any follow-up questions about this report? (type 'exit' or 'no' to finish): ")
+                if follow_up.lower().strip() in ['exit', 'quit', 'q', 'no']:
+                    break
+                if not follow_up.strip():
+                    continue
+                
+                print("\nThinking...")
+                answer = await answer_doubt(report, follow_up)
+                print(f"\nAnswer: {answer}")
+            except (KeyboardInterrupt, EOFError):
+                print("\nExiting follow-up...")
+                break
+
+        print("\n" + "=" * 50)
+        try:
+            another = input("Do you want to generate another report? (yes/no): ")
         except (KeyboardInterrupt, EOFError):
-            print("\nExiting...")
-            import os
-            os._exit(0)
+            another = "no"
+
+        print("Archiving the current report...")
+        save_report(query=query, report=report)
+        print("Report archived successfully!")
+
+        if another.lower().strip() in ['yes', 'y']:
+            query = None  # Reset query to prompt again
+        else:
+            print("Exiting. Have a great day!")
+            break
 
 
 if __name__ == "__main__":

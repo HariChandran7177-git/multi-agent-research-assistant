@@ -74,6 +74,11 @@
         <div class="drawer-body" id="drawerBody">—</div>
         <div class="drawer-log" id="drawerLog">—</div>
       </div>
+      
+      <div id="hitl-review-section" class="hitl-review-container" style="display:none; margin-top:32px; padding:24px; background: rgba(19, 26, 35, 0.8); border: 1px solid var(--line); border-radius: 12px;">
+        <div style="font-family: var(--mono); font-size: 13px; color: var(--teal); margin-bottom: 16px;">// INTERMEDIATE REVIEW WAITING</div>
+        <div id="hitl-review-content" class="report-container" style="padding: 24px; box-shadow: none;"></div>
+      </div>
     </div>
   </div>
 </section>
@@ -119,6 +124,13 @@
     </div>
     <div id="report-body" class="report-container">
        <p style="color:var(--muted);font-style:italic;">Writing report<span class="stream-cursor"></span></p>
+    </div>
+    <div id="doubt-section" style="display:none; margin-top: 32px;">
+      <div class="query-bar" style="max-width:100%; border: 1px solid var(--line-soft); background: var(--panel);">
+        <input type="text" id="doubtInput" placeholder="Ask a follow-up question about this report...">
+        <button id="doubt-btn" onclick="askDoubt()">Ask</button>
+      </div>
+      <div id="doubt-response" class="drawer-log" style="display:none; margin-top: 16px;"></div>
     </div>
   </div>
 </section>

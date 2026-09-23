@@ -10,43 +10,47 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from core.state import ResearchState
 from core.logger import get_logger
 from core.metrics import metrics
-from core.config import AGENT_TIMEOUT, GROQ_MODEL, GROQ_API_KEY
-from langchain_groq import ChatGroq
+from core.config import AGENT_TIMEOUT, GROQ_API_KEY
 
 load_dotenv()
 logger = get_logger(__name__)
 
-# ── Gemini API Embeddings (no PyTorch, no local model, ~0 MB RAM) ─────────────
-# Uses Google's gemini-embedding-2 (3072-dim) via API.
-# Much lighter than SentenceTransformer which requires ~700MB for PyTorch.
-_gemini_embeddings = None
+# ── SentenceTransformer Embeddings ─────────────
+# Uses local all-MiniLM-L6-v2 (384-dim).
+_st_model = None
 
 
 def get_embeddings():
-    """Get Gemini API embedding engine (lazy-init, stateless API calls)."""
-    global _gemini_embeddings
-    if _gemini_embeddings is None:
-        logger.info("Initializing Gemini API embeddings (gemini-embedding-2, 3072-dim)...")
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
-        _gemini_embeddings = GoogleGenerativeAIEmbeddings(
-            model="gemini-embedding-2",  # no 'models/' prefix — langchain adds it internally
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
-        )
-    return _gemini_embeddings
+    """Get SentenceTransformer engine (lazy-init)."""
+    global _st_model
+    if _st_model is None:
+        logger.info("Initializing SentenceTransformer (all-MiniLM-L6-v2, 384-dim)...")
+        
+        # Set explicit cache directory
+        import os
+        cache_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "model_cache"))
+        os.makedirs(cache_dir, exist_ok=True)
+        os.environ["HF_HOME"] = cache_dir
+        os.environ["SENTENCE_TRANSFORMERS_HOME"] = cache_dir
+        
+        from sentence_transformers import SentenceTransformer
+        _st_model = SentenceTransformer("all-MiniLM-L6-v2", cache_folder=cache_dir)
+    return _st_model
 
 
 class LazyEmbeddingsWrapper:
-    """Thin wrapper that lazily initialises the Gemini embedding client."""
+    """Thin wrapper that lazily initialises the embedding client."""
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         try:
-            return get_embeddings().embed_documents(texts)
+            # SentenceTransformer returns numpy array, convert to list
+            return get_embeddings().encode(texts).tolist()
         except Exception as e:
             logger.error(f"EMBEDDING FAILURE: Failed to embed documents. {str(e)}")
             raise RuntimeError(f"EMBEDDING FAILURE: {str(e)}")
 
     def embed_query(self, text: str) -> list[float]:
         try:
-            return get_embeddings().embed_query(text)
+            return get_embeddings().encode([text])[0].tolist()
         except Exception as e:
             logger.error(f"EMBEDDING FAILURE: Failed to embed query. {str(e)}")
             raise RuntimeError(f"EMBEDDING FAILURE: {str(e)}")
@@ -54,8 +58,8 @@ class LazyEmbeddingsWrapper:
 
 embeddings = LazyEmbeddingsWrapper()
 
-# Gemini gemini-embedding-2 outputs 3072-dimensional vectors
-EMBEDDING_DIM = 3072
+# all-MiniLM-L6-v2 outputs 384-dimensional vectors
+EMBEDDING_DIM = 384
 
 
 
@@ -179,65 +183,6 @@ def _fallback_retrieval(state: ResearchState, texts: List[str], error_msg: str =
     return state
 
 
-async def _filter_important_texts(query: str, texts: List[str], max_items: int = 15) -> List[str]:
-    """Use a fast LLM to pre-filter the most relevant texts before embedding."""
-    if len(texts) <= max_items:
-        return texts
-
-    logger.info(
-        f"Pre-filtering {len(texts)} texts down to {max_items} using LLM...")
-
-    try:
-        llm = ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY, temperature=0.0)
-
-        # Prepare context chunks (truncate to save tokens and speed up)
-        context = ""
-        for i, text in enumerate(texts):
-            preview = text[:400].replace('\n', ' ')
-            context += f"[{i}] {preview}...\n"
-
-        prompt = f"""You are an expert researcher. The user's original query is: "{query}"
-
-Here are several snippets of information scraped from the web:
-{context}
-
-Which snippets are the MOST relevant and important to answer the query?
-Select exactly {max_items} snippets (or fewer if some are completely irrelevant).
-Return ONLY a comma-separated list of the index numbers (e.g., 0, 3, 5, 12). No other text."""
-
-        response = await llm.ainvoke(prompt)
-        content = response.content.strip()
-
-        # Parse indices robustly
-        import re
-        indices = [int(idx) for idx in re.findall(r'\d+', content)]
-
-        # Filter and validate
-        valid_indices = [idx for idx in indices if 0 <= idx < len(texts)]
-
-        if not valid_indices:
-            logger.warning(
-                "LLM returned no valid indices. Falling back to first items.")
-            return texts[:max_items]
-
-        # De-duplicate while preserving order
-        unique_indices = []
-        for idx in valid_indices:
-            if idx not in unique_indices:
-                unique_indices.append(idx)
-
-        unique_indices = unique_indices[:max_items]
-
-        logger.info(
-            f"LLM selected {len(unique_indices)} indices: {unique_indices}")
-        return [texts[i] for i in unique_indices]
-
-    except Exception as e:
-        logger.error(
-            f"Pre-filtering LLM failed: {e}. Falling back to first {max_items} items.")
-        return texts[:max_items]
-
-
 async def retriever_node(state: ResearchState) -> ResearchState:
     """Async retriever node with timeout and metrics."""
     loop = asyncio.get_running_loop()
@@ -253,9 +198,11 @@ async def retriever_node(state: ResearchState) -> ResearchState:
     session_id = str(uuid.uuid4())  # unique tag for THIS run only
     user_id = state.get("user_id", "default_user")
 
-    # Intelligently filter to top 15 chunks to avoid Google Gemini 429 rate limits
-    raw_texts = state.get("research_results", [])
-    texts = await _filter_important_texts(state.get("query", ""), raw_texts, max_items=15)
+    # Use all chunks since local SentenceTransformer has no rate limits
+    texts = state.get("research_results", [])
+    if not texts:
+        logger.info("No research results to embed")
+        return _fallback_retrieval(state, texts, "No research results to embed")
 
     # Ensure collection exists
     try:

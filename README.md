@@ -80,6 +80,31 @@
 
 ---
 
+## 📊 Research Quality Scoring Rubric
+
+Every research run is evaluated by a **hybrid scoring system** (7% LLM + 93% objective signals). The objective score is composed of 6 deterministic signals:
+
+| Signal | Weight | How It Works |
+|---|---|---|
+| **Retrieval Relevance** | 35% | Average Qdrant cosine similarity between the query embedding and each retrieved chunk. The most reliable signal — directly measures query-document match. |
+| **Plan Coverage** | 20% | For each planned sub-task, checks if at least one result addresses it via keyword overlap. Penalizes skipped sub-tasks. |
+| **Content Depth** | 20% | Character length as a proxy for substance. `<150 chars` → 0.2 (shallow), `150–500` → 0.7, `>500` → 1.0 (deep). |
+| **Source Quality** | 10% | Domain credibility heuristic. `.edu/.gov/.org` → 1.0, known publications (Nature, arXiv, Reuters, etc.) → 0.9, unknown domains → 0.6, missing URL → 0.4. |
+| **Duplicate Penalty** | 10% | 80-character fingerprint match detection. Identical fingerprints are penalized. Score = `1.0 - (duplicates / total)`. |
+| **Diversity** | 5% | Uniqueness of the first 50 characters across all results. Catches scraping loops that return near-identical content. |
+
+**Composite Formula:**
+```
+objective_score = (retrieval_relevance × 0.35) + (plan_coverage × 0.20) + (content_depth × 0.20)
+               + (source_quality × 0.10) + (duplicate_penalty × 0.10) + (diversity × 0.05)
+
+hybrid_score   = (llm_score × 0.07) + (objective_score × 0.93)
+```
+
+> **Threshold:** A hybrid score of **≥ 0.8** is required to break the self-correction loop. If not met after 3 iterations, the pipeline proceeds with grounding safeguards.
+
+---
+
 ## 🐛 Bugs Found & Fixed
 
 During development and load testing, we discovered and resolved several critical architectural flaws:

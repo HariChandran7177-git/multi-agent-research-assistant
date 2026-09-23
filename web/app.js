@@ -95,10 +95,10 @@ function openDrawer(key) {
   
   if (agentLogs[key]) {
     document.getElementById('drawerBody').innerHTML = agentLogs[key].desc || '—';
-    document.getElementById('drawerLog').textContent = agentLogs[key].log || '—';
+    document.getElementById('drawerLog').innerHTML = md2html(agentLogs[key].log || '—');
   } else {
     document.getElementById('drawerBody').textContent = 'Waiting for data...';
-    document.getElementById('drawerLog').textContent = '—';
+    document.getElementById('drawerLog').innerHTML = '—';
   }
   drawer.classList.add('open');
 }
@@ -122,19 +122,34 @@ function resetPipeline() {
   document.getElementById('report-viewer-section').style.display = 'none';
   document.getElementById('report-body').innerHTML = '<p style="color:var(--muted);font-style:italic;">Writing report<span class="stream-cursor"></span></p>';
   document.getElementById('resume-btn').style.display = 'none';
+  document.getElementById('doubt-section').style.display = 'none';
+  document.getElementById('doubt-response').style.display = 'none';
+  document.getElementById('doubt-response').innerHTML = '';
+  document.getElementById('hitl-review-section').style.display = 'none';
+  _lastReportString = '';
 }
 
 function setNodeState(key, state, statusText) {
   const node = document.getElementById('node-' + key);
   if(!node) return;
-  node.className = 'node ' + state;
-  document.getElementById('name-' + key).classList.remove('dim');
+  
+  if (state === 'idle') {
+    node.className = 'node';
+    document.getElementById('name-' + key).classList.add('dim');
+  } else {
+    node.className = 'node ' + (state === 'skipped' ? 'done' : state);
+    document.getElementById('name-' + key).classList.remove('dim');
+  }
+  
   if(statusText) document.getElementById('status-' + key).textContent = statusText;
   
-  // Update connector if done
-  if(state === 'done') {
+  // Update connector if done or skipped
+  if(state === 'done' || state === 'skipped') {
     const conn = document.getElementById('conn-' + key);
     if(conn) conn.style.width = '100%';
+  } else if (state === 'idle') {
+    const conn = document.getElementById('conn-' + key);
+    if(conn) conn.style.width = '0%';
   }
 }
 
@@ -144,6 +159,7 @@ function setNodeState(key, state, statusText) {
 let eventSource = null;
 let currentThreadId = null;
 let _streamBuffer = '';
+let _lastReportString = '';
 let isPipelineRunning = false;
 let currentAbortController = null;
 
@@ -233,9 +249,29 @@ function handleSSEEvent(evType, evData) {
     let desc = agentLogs[agent] ? agentLogs[agent].desc : '';
     let log = '';
 
-    if (agent === 'router') log = `→ tone: ${r.tone}, casual: ${r.is_casual}`;
-    else if (agent === 'planner') log = `→ ${r.plan?.length || 0} sub-tasks planned`;
-    else if (agent === 'researcher') log = `→ found ${r.sources_found || 0} sources (pass ${r.iteration || 1})`;
+    if (agent === 'router') {
+      log = `→ tone: ${r.tone}\n→ casual: ${r.is_casual}`;
+    }
+    else if (agent === 'planner') {
+      log = `→ ${r.plan?.length || 0} sub-tasks planned`;
+      if (r.plan && r.plan.length > 0) {
+        log += '\n\n**Generated Plan:**\n' + r.plan.map((t, i) => `${i+1}. ${t}`).join('\n');
+      }
+    }
+    else if (agent === 'researcher') {
+      log = `→ found ${r.sources_found || 0} sources (pass ${r.iteration || 1})`;
+      if (r.sources && r.sources.length > 0) {
+        const unique = [];
+        const seen = new Set();
+        r.sources.forEach(s => {
+          if (!seen.has(s.url)) {
+            seen.add(s.url);
+            unique.push(s);
+          }
+        });
+        log += '\n\n**Sources Analyzed:**\n' + unique.map((s, i) => `${i+1}. [${s.title}](${s.url})`).join('\n');
+      }
+    }
     else if (agent === 'retriever') log = `→ retrieved ${r.docs_retrieved || 0} vectors`;
     else if (agent === 'critic') {
       const score = (r.confidence || 0).toFixed(2);
@@ -250,6 +286,10 @@ function handleSSEEvent(evType, evData) {
         if(prevConn) prevConn.style.width = '0%';
         const prevConn2 = document.getElementById('conn-researcher');
         if(prevConn2) prevConn2.style.width = '0%';
+        
+        // Reset the nodes that are going to be re-run so they don't look permanently done
+        setNodeState('retriever', 'idle', 'idle');
+        setNodeState('researcher', 'idle', 'idle');
       }
       updateConfidenceUI(score, r.iteration);
     }
@@ -272,7 +312,18 @@ function handleSSEEvent(evType, evData) {
     currentThreadId = evData.thread_id;
     document.getElementById('run-status').textContent = 'WAITING FOR APPROVAL';
     document.getElementById('resume-btn').style.display = 'inline-block';
-    showToast('Human review required. Check drawer and approve.', 'success');
+    showToast('Human review required. Check intermediate results and approve.', 'success');
+    
+    const reviewSection = document.getElementById('hitl-review-section');
+    if (reviewSection) {
+      reviewSection.style.display = 'block';
+      let reviewHtml = '<h3>1. Generated Plan (5 Tasks)</h3><ul>';
+      (evData.plan || []).forEach(t => reviewHtml += `<li>${t}</li>`);
+      reviewHtml += '</ul><br><h3>2. Polished Web Research</h3>';
+      (evData.polished_research || []).forEach(r => reviewHtml += md2html(r));
+      document.getElementById('hitl-review-content').innerHTML = reviewHtml;
+      reviewSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
   
   else if (evType === 'report_chunk') {
@@ -287,12 +338,29 @@ function handleSSEEvent(evType, evData) {
   else if (evType === 'complete') {
     document.getElementById('run-status').textContent = 'COMPLETE';
     document.getElementById('resume-btn').style.display = 'none';
+    
+    if (evData.is_casual) {
+      const agentsToSkip = ['planner', 'researcher', 'retriever', 'critic', 'reporter'];
+      agentsToSkip.forEach((a, idx) => {
+        setTimeout(() => {
+          setNodeState(a, 'skipped', 'bypassed');
+        }, idx * 150);
+      });
+    }
+
     if(_streamBuffer) {
+      _lastReportString = _streamBuffer;
       document.getElementById('report-body').innerHTML = md2html(_streamBuffer); // remove cursor
     } else if (evData.report) {
+      _lastReportString = evData.report;
       document.getElementById('report-viewer-section').style.display = 'block';
       document.getElementById('report-body').innerHTML = md2html(evData.report);
     }
+    
+    // Show doubt section
+    const doubtSec = document.getElementById('doubt-section');
+    if (doubtSec) doubtSec.style.display = 'block';
+    
     loadArchive();
   }
   
@@ -306,6 +374,7 @@ async function resumePipeline() {
   if (!currentThreadId) return;
   document.getElementById('resume-btn').style.display = 'none';
   document.getElementById('run-status').textContent = 'RESEARCHING...';
+  document.getElementById('hitl-review-section').style.display = 'none';
   document.getElementById('report-viewer-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
   try {
     const res = await fetch(`${API_BASE}/research/resume`, {
@@ -444,3 +513,35 @@ document.getElementById('queryInput').addEventListener('keydown', e => {
     startRealPipeline();
   }
 });
+
+// Doubt Agent
+async function askDoubt() {
+  const input = document.getElementById('doubtInput');
+  const btn = document.getElementById('doubt-btn');
+  const responseBox = document.getElementById('doubt-response');
+  const q = input.value.trim();
+  if(!q || !_lastReportString) return;
+
+  btn.textContent = 'Thinking...';
+  btn.disabled = true;
+  responseBox.style.display = 'block';
+  responseBox.innerHTML = '<span style="color:var(--muted)"><em>Consulting Doubt agent...</em></span>';
+
+  try {
+    const res = await fetch(API_BASE + '/doubt', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ report: _lastReportString, question: q })
+    });
+    const data = await res.json();
+    if(data.error) throw new Error(data.error);
+    responseBox.innerHTML = `<strong>Q: ${q}</strong><br><br>${md2html(data.answer)}`;
+    input.value = '';
+  } catch(e) {
+    responseBox.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+  } finally {
+    btn.textContent = 'Ask';
+    btn.disabled = false;
+  }
+}
+

@@ -24,9 +24,9 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 
 # ── Token caps (conservative to avoid context overflow and token limit errors) ──
 # Each char ≈ 0.25 tokens for English text. These caps keep total prompt well under 8k tokens.
-RESEARCH_CHAR_CAP = 3000   # ~750 tokens of research findings
-DOCS_CHAR_CAP = 2000       # ~500 tokens of retrieved docs
-PLAN_CHAR_CAP = 800        # ~200 tokens of plan
+RESEARCH_CHAR_CAP = 20000   # ~5000 tokens of research findings
+DOCS_CHAR_CAP = 5000       # ~1250 tokens of retrieved docs
+PLAN_CHAR_CAP = 2000        # ~500 tokens of plan
 
 REPORTER_PROMPT = """You are writing a research report. Follow these instructions strictly.
 
@@ -55,9 +55,6 @@ Examples of what this means in practice:
 
 ## YOUR QUERY
 {query}
-
-## RESEARCH PLAN (sub-tasks that were investigated)
-{plan}
 
 ## RESEARCH FINDINGS (use ONLY these facts — do NOT add outside knowledge)
 {research_results}
@@ -113,7 +110,6 @@ def _build_prompt(tone, query, plan_text, research_text, docs_text, confidence=N
     prompt = REPORTER_PROMPT.format(
         tone=tone,
         query=query,
-        plan=plan_text[:PLAN_CHAR_CAP],
         research_results=research_text[:RESEARCH_CHAR_CAP],
         retrieved_docs=docs_text[:DOCS_CHAR_CAP],
     )

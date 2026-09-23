@@ -63,12 +63,7 @@ def check_environment():
 
 
 
-# ── Rate Limiting Setup (slowapi) ─────────────────────────────────────────────
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 
-limiter = Limiter(key_func=get_remote_address, default_limits=["5 per minute"])
 
 # ── Add root to path so we can import core / agents ──────────────────────────
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -124,9 +119,7 @@ app = FastAPI(
 # Validate environment at startup
 check_environment()
 
-# Register rate limiting exception handler
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 
 app.add_middleware(
@@ -265,14 +258,7 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
             # Get the compiled graph
             await get_graph()
 
-            # Start Plain LLM task concurrently
-            from langchain_groq import ChatGroq
-            from core.config import GROQ_REPORTER_MODEL, GROQ_API_KEY
-            plain_llm = ChatGroq(model=GROQ_REPORTER_MODEL, api_key=GROQ_API_KEY, temperature=0.3, max_tokens=512)
-            plain_llm_task = asyncio.create_task(
-                plain_llm.ainvoke(f"Answer this query concisely (2-3 paragraphs max):\n\n{query}")
-            )
-            plain_llm_sent = False
+
 
             state = initial_state.copy()
 
@@ -298,13 +284,7 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
                 yield sse_event("agent_done", {"agent": "router", "label": "Router", "error": "timeout"})
 
             if state.get("is_casual"):
-                if not plain_llm_sent:
-                    try:
-                        plain_res = await plain_llm_task
-                        yield sse_event("plain_llm_done", {"response": plain_res.content, "timestamp": time.time()})
-                    except Exception as e:
-                        logger.error(f"Plain LLM failed: {e}")
-                        yield sse_event("plain_llm_done", {"response": "Failed to generate plain LLM response.", "timestamp": time.time()})
+
 
                 complete_payload = {
                     "report": state.get("final_report", ""),
@@ -362,7 +342,11 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
                     )
                     yield sse_event("agent_done", {
                         "agent": "researcher", "label": "Researcher",
-                        "result": {"sources_found": len(state.get("research_results", [])), "iteration": iteration},
+                        "result": {
+                            "sources_found": len(state.get("research_results", [])), 
+                            "iteration": iteration,
+                            "sources": state.get("sources", [])
+                        },
                         "timestamp": time.time(),
                     })
                 except asyncio.TimeoutError:
@@ -428,9 +412,11 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
                 if score >= CONFIDENCE_THRESHOLD:
                     break
 
-            # Human in the Loop (HITL) check
+            # Re-added Human in the Loop (HITL) check based on user request
             yield sse_event("hitl_pause", {
                 "message": "Human review required. Do you want to generate the final report?",
+                "plan": state.get("plan", []),
+                "polished_research": state.get("research_results", []),
                 "timestamp": time.time(), "thread_id": thread_id,
             })
 
@@ -489,13 +475,7 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
                 logger.warning("Reporter timed out")
                 yield sse_event("agent_done", {"agent": "reporter", "label": "Reporter", "error": "timeout"})
 
-            # Ensure plain LLM response is sent
-            if not plain_llm_sent:
-                try:
-                    plain_res = await plain_llm_task
-                    yield sse_event("plain_llm_done", {"response": plain_res.content, "timestamp": time.time()})
-                except Exception as e:
-                    logger.error(f"Plain LLM failed: {e}")
+
 
             complete_payload = {
                 "report": state.get("final_report", ""),
@@ -537,7 +517,6 @@ async def stream_pipeline(query: str, user_id: str = "default_user") -> AsyncGen
 
 
 @app.post("/research/stream")
-@limiter.limit("5 per minute")
 async def research_stream(payload: ResearchRequest, request: Request):
     """SSE endpoint — streams agent events as they happen."""
     return StreamingResponse(
@@ -552,7 +531,6 @@ async def research_stream(payload: ResearchRequest, request: Request):
 
 
 @app.post("/research")
-@limiter.limit("5 per minute")
 async def research_sync(payload: ResearchRequest, request: Request):
     """Synchronous fallback — waits for full pipeline then returns."""
     cache_key = get_cache_key(payload.query)
@@ -650,128 +628,6 @@ async def delete_report_by_id(report_id: int):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
     return {"status": "deleted", "id": report_id}
-
-
-# ── PDF Export (Group 5.3) ─────────────────────────────────────────────────────
-@app.get("/reports/{report_id}/export.pdf")
-async def export_report_pdf(report_id: int):
-    """Export a report as a styled PDF (HTML-rendered via markdown2)."""
-    from fastapi import HTTPException
-    from fastapi.responses import Response
-    import markdown2
-
-    record = get_report(report_id)
-    if not record:
-        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
-
-    md_text = record.get("report", "")
-    html_body = markdown2.markdown(md_text, extras=["fenced-code-blocks", "tables", "header-ids"])
-
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"/>
-<title>Research Report #{report_id}</title>
-<style>
-  body {{ font-family: Georgia, serif; max-width: 860px; margin: 40px auto; padding: 0 24px;
-         color: #1a1a2e; line-height: 1.7; font-size: 15px; }}
-  h1 {{ font-size: 2em; color: #16213e; border-bottom: 3px solid #0f3460; padding-bottom: 8px; }}
-  h2 {{ font-size: 1.4em; color: #0f3460; margin-top: 2em; }}
-  h3 {{ color: #533483; }}
-  code {{ background: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }}
-  pre  {{ background: #1a1a2e; color: #eee; padding: 16px; border-radius: 8px; overflow-x: auto; }}
-  blockquote {{ border-left: 4px solid #0f3460; margin-left: 0; padding-left: 16px; color: #555; }}
-  table {{ border-collapse: collapse; width: 100%; margin: 1em 0; }}
-  th, td {{ border: 1px solid #ccc; padding: 8px 12px; text-align: left; }}
-  th {{ background: #0f3460; color: white; }}
-  .meta {{ font-size: 0.85em; color: #666; margin-bottom: 2em; }}
-</style>
-</head><body>
-<div class="meta">
-  <strong>Query:</strong> {record.get('query', '')}<br/>
-  <strong>Confidence:</strong> {record.get('confidence', 0):.0%} &nbsp;|&nbsp;
-  <strong>Tone:</strong> {record.get('tone', 'professional').title()} &nbsp;|&nbsp;
-  <strong>Iterations:</strong> {record.get('iterations', 0)} &nbsp;|&nbsp;
-  <strong>Generated:</strong> {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(record.get('created_at', 0)))}
-</div>
-{html_body}
-</body></html>"""
-
-    # Try weasyprint (richer PDF); fall back to plain HTML download
-    try:
-        import weasyprint
-        pdf_bytes = weasyprint.HTML(string=html).write_pdf()
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename=report_{report_id}.pdf"},
-        )
-    except ImportError:
-        # Serve styled HTML as fallback — browser can print-to-PDF
-        return Response(
-            content=html.encode(),
-            media_type="text/html",
-            headers={"Content-Disposition": f"inline; filename=report_{report_id}.html"},
-        )
-
-
-# ── Report Versioning (Group 5.2) ──────────────────────────────────────────────
-@app.get("/reports/versions")
-async def list_report_versions(query: str):
-    """Return all report versions for the same query string."""
-    from core.report_history import _get_conn
-    conn = _get_conn()
-    try:
-        rows = conn.execute(
-            "SELECT id, confidence, iterations, tone, created_at FROM reports WHERE query=? ORDER BY created_at DESC",
-            (query,)
-        ).fetchall()
-        return {"query": query, "versions": [dict(r) for r in rows], "count": len(rows)}
-    finally:
-        conn.close()
-
-
-# ── Multi-Language Research (Group 5.4) ────────────────────────────────────────
-class MultiLangRequest(BaseModel):
-    query: str
-    user_id: str = "default_user"
-    language: str = "auto"   # "auto" = detect from query, or explicit e.g. "es", "fr", "de"
-
-
-@app.post("/research/multilang/stream")
-@limiter.limit("5 per minute")
-async def research_multilang_stream(payload: MultiLangRequest, request: Request):
-    """
-    Multilingual research: detects query language (or uses 'language' param),
-    runs the full pipeline, and instructs the reporter to respond in that language.
-    """
-    lang = payload.language
-    query = payload.query
-
-    # Build language-prefixed query so the reporter knows the target language
-    if lang == "auto":
-        # Simple heuristic: use the query as-is; reporter prompt already adapts tone
-        prefixed_query = query
-    else:
-        lang_map = {
-            "es": "Spanish", "fr": "French", "de": "German", "hi": "Hindi",
-            "zh": "Chinese", "ar": "Arabic", "pt": "Portuguese", "ja": "Japanese",
-            "ko": "Korean", "it": "Italian", "ru": "Russian",
-        }
-        lang_name = lang_map.get(lang.lower(), lang)
-        prefixed_query = f"[Respond entirely in {lang_name}] {query}"
-
-    # Inject language note into user_id so reporter can see it via state (simple hack)
-    augmented_user_id = f"{payload.user_id}|lang:{lang}"
-
-    return StreamingResponse(
-        stream_pipeline(prefixed_query, augmented_user_id),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-            "X-Research-Language": lang,
-        },
-    )
 
 
 # Mount static files at root / so style.css and app.js resolve correctly

@@ -1,8 +1,9 @@
 # ruff: noqa: E402
+from core.config import GEMINI_PLANNER_MODEL, GEMINI_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
 import os
 import asyncio
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from core.state import ResearchState
 from core.logger import get_logger
 from core.metrics import metrics
@@ -11,12 +12,14 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 # Load .env from the project root (one level up from agents/)
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-from core.config import GROQ_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
 
 logger = get_logger(__name__)
 
-llm = ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY)
-
+llm = ChatGoogleGenerativeAI(
+    model=GEMINI_PLANNER_MODEL,
+    google_api_key=GEMINI_API_KEY,
+    temperature=0.3,
+)
 
 @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX))
 def invoke_with_retry(llm, prompt):
@@ -29,18 +32,18 @@ async def planner_node(state: ResearchState) -> ResearchState:
     query = state["query"]
     logger.info(f"Planning sub-tasks for query: {query}")
 
-    prompt = f"""Classify the query intent into one of the following 10 task types and break it down into 4-5 focused, tactical research sub-tasks:
+    prompt = f"""Classify the query intent into one of the following 10 task types and break it down into 4-5 focused, tactical research sub-tasks.
 
-1. Business strategy ("Should we expand into X?"): Focus on Situation/Context, Strategic Options, Risks & Tradeoffs, Recommendations, and Implementation Steps.
-2. Market/competitive research ("Research EV market"): Focus on Market Overview, Key Players, Industry Trends, Gaps & Opportunities, and Market Forecast.
-3. Technical explainer ("Explain transformers"): Focus on Concept Overview, Core Technical Mechanics, Code/Architecture Examples, and Practical Significance.
-4. Comparison/decision ("AWS vs GCP"): Focus on Comparison Criteria, Option A Strengths/Weaknesses, Option B Strengths/Weaknesses, Tradeoffs, and Final Recommendation.
-5. Trend/current-state ("Latest AI regulations"): Focus on Timeline of Developments, Industry/Policy Implications, Key Indicators, and What to Watch.
-6. How-to/process ("How RAG retrieval works"): Focus on Prerequisites, Sequential Step-by-Step Execution, Optimization Best Practices, and Key Summary.
-7. Pros/cons/evaluation ("Is Qdrant good for prod?"): Focus on Core Advantages (Pros), Limitations/Drawbacks (Cons), Production Verdict, and Caveats.
-8. Problem-diagnosis ("Why churn rate increasing?"): Focus on Likely Root Causes (Ranked), Empirical Evidence & Metrics, Investigation Steps, and Remediation.
-9. Broad/open research ("Research quantum computing"): Focus on Background Context, Key Findings by Sub-Topic, Industry Impact, and Synthesis.
-10. Risk assessment ("Risks of microservices"): Focus on Risk Categories, Severity & Likelihood, Mitigation Strategies, and Actionable Safeguards.
+[... your existing 10 categories stay exactly the same ...]
+
+CRITICAL: Every single sub-task you output MUST explicitly include the query's subject matter — never output a bare category label on its own.
+For example, if the query is "explain about the ai voice agents" and the task type is Technical explainer, output:
+Concept Overview of AI Voice Agents
+Core Technical Mechanics of AI Voice Agents
+Code/Architecture Examples of AI Voice Agents
+Practical Significance of AI Voice Agents
+
+Do NOT output just "Concept Overview" or "Core Technical Mechanics" — these are category labels, not final sub-tasks. Always attach the topic.
 
 Return ONLY a plain list of clear research topics, one per line. Do NOT include numbers, bullet points, or prefixes.
 
@@ -64,12 +67,24 @@ Query: {query}"""
             if line:
                 cleaned_tasks.append(line)
 
+        CATEGORY_LABELS = {
+            "business strategy", "market/competitive research", "technical explainer",
+            "comparison/decision", "trend/current-state", "how-to/process",
+            "pros/cons/evaluation", "problem-diagnosis", "broad/open research",
+            "risk assessment"
+        }
+        cleaned_tasks = [
+            t for t in cleaned_tasks
+            if t.strip().lower() not in CATEGORY_LABELS
+        ]
+
         logger.info(f"Generated {len(cleaned_tasks)} cleaned sub-tasks")
         state["plan"] = cleaned_tasks
         state["iteration_count"] = 0
 
         # Record metrics
-        metrics.end_agent("planner", input_tokens=len(query), output_tokens=len(response.content))
+        metrics.end_agent("planner", input_tokens=len(query),
+                          output_tokens=len(response.content))
 
     except asyncio.TimeoutError:
         logger.warning(f"Planner timeout after {AGENT_TIMEOUT}s")
@@ -86,7 +101,8 @@ Query: {query}"""
 
 
 if __name__ == "__main__":
-    sample_state = {"query": "AI agent architectures and multi-agent coordination"}
+    sample_state = {
+        "query": "AI agent architectures and multi-agent coordination"}
     print("\n--- Testing Planner Agent ---")
     print(f"Query: {sample_state['query']}\n")
     result = asyncio.run(planner_node(sample_state))
