@@ -23,7 +23,7 @@
 
 🔗 **[Live Demo →](https://multi-agent-research-assistant.onrender.com)**
 
-[**📖 How It Works**](#️-architecture--workflow) · [**🚀 Quickstart**](#-quickstart) · [**💡 Features**](#-features) · [**📄 Sample Output**](#-sample-output) · [**🤝 Contributing**](docs/CONTRIBUTING.md)
+[**📖 How It Works**](#️-architecture--workflow) · [**🚀 Quickstart**](#-quickstart) · [**💡 Features**](#-features) · [**📄 Sample Output**](#-sample-output)
 
 </div>
 
@@ -50,7 +50,7 @@
   </tr>
   <tr>
     <td>🔁 <strong>Self-Correcting Loop</strong></td>
-    <td>A Critic agent scores research quality using a <strong>hybrid score</strong> (7% LLM + 93% objective signals). If confidence is below <strong>0.8</strong>, it loops back for another research pass — automatically.</td>
+    <td>A Critic agent scores research quality using a <strong>hybrid score</strong> (60% LLM + 40% objective signals). If confidence is below <strong>0.8</strong>, it loops back for another research pass — automatically.</td>
   </tr>
   <tr>
     <td>🎭 <strong>Dynamic Tone</strong></td>
@@ -66,7 +66,7 @@
   </tr>
   <tr>
     <td>🙋 <strong>Doubt Box (Follow-ups)</strong></td>
-    <td>Ask specific questions about a generated report. The system strictly grounds answers in the report content without hallucinations.</td>
+    <td>Ask specific questions about a generated report. The system first checks the report, but will also use general knowledge to answer if the report lacks the information.</td>
   </tr>
   <tr>
     <td>⏸️ <strong>Human-in-the-Loop (HitL)</strong></td>
@@ -82,7 +82,7 @@
 
 ## 📊 Research Quality Scoring Rubric
 
-Every research run is evaluated by a **hybrid scoring system** (7% LLM + 93% objective signals). The objective score is composed of 6 deterministic signals:
+Every research run is evaluated by a **hybrid scoring system** (60% LLM + 40% objective signals). The objective score is composed of 6 deterministic signals:
 
 | Signal | Weight | How It Works |
 |---|---|---|
@@ -98,7 +98,7 @@ Every research run is evaluated by a **hybrid scoring system** (7% LLM + 93% obj
 objective_score = (retrieval_relevance × 0.35) + (plan_coverage × 0.20) + (content_depth × 0.20)
                + (source_quality × 0.10) + (duplicate_penalty × 0.10) + (diversity × 0.05)
 
-hybrid_score   = (llm_score × 0.07) + (objective_score × 0.93)
+hybrid_score   = (llm_score × 0.60) + (objective_score × 0.40)
 ```
 
 > **Threshold:** A hybrid score of **≥ 0.8** is required to break the self-correction loop. If not met after 3 iterations, the pipeline proceeds with grounding safeguards.
@@ -126,7 +126,7 @@ flowchart TD
         B -- Requires Research --> C[📋 Planner\nBreaks into 4-5 sub-tasks]
         C --> D[🔍 Researcher\nParallel Tavily Web Search]
         D --> E[🗄️ Retriever\nLocal Embed → Qdrant → Top-K Recall]
-        E --> F[🧐 Critic\nHybrid Score: 7% LLM + 93% Objective]
+        E --> F[🧐 Critic\nHybrid Score: 60% LLM + 40% Objective]
         F -- score < 0.8 AND iterations < 3 --> D
         F -- score ≥ 0.8 OR max iterations --> G[📝 Reporter\nTone-Aware Markdown Report]
     end
@@ -264,10 +264,15 @@ multi-agent-research-assistant/
 │   ├── critic.py        # 🧐 Hybrid quality scorer (LLM + objective signals)
 │   └── reporter.py      # 📝 Tone-aware markdown report writer (w/ strict grounding)
 ├── core/
+│   ├── cache.py         # Caching mechanism for API cost savings
+│   ├── config.py        # Environment variables and configuration
 │   ├── graph.py         # LangGraph nodes, edges & conditional routing (AsyncSqliteSaver)
-│   ├── state.py         # ResearchState TypedDict — shared agent memory
+│   ├── health.py        # System health and Qdrant startup verification
+│   ├── logger.py        # Structured console logging
+│   ├── metrics.py       # Observability and token tracking
+│   ├── report_history.py # SQLite database for archiving reports
 │   ├── scorer.py        # Objective scoring signals (Qdrant, length, sources)
-│   └── logger.py        # Structured console logging
+│   └── state.py         # ResearchState TypedDict — shared agent memory
 ├── .github/
 │   ├── workflows/ci.yml # GitHub Actions: pytest + ruff on every push
 │   └── ISSUE_TEMPLATE/  # Bug report & feature request templates
@@ -276,11 +281,6 @@ multi-agent-research-assistant/
 ├── assets/banner.png    # Repo banner
 ├── main.py              # CLI entry point
 ├── .env.example         # API key template
-├── docs/
-│   ├── CONTRIBUTING.md
-│   ├── CHANGELOG.md
-│   ├── DECISIONS.md
-│   └── PROJECT_DOCUMENTATION.md
 └── LICENSE
 ```
 
@@ -317,7 +317,7 @@ Tests are designed to mock all external APIs (Groq, Tavily, Qdrant) — no real 
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](docs/CONTRIBUTING.md) first.
+Contributions are welcome!
 
 1. Fork the repo
 2. Create a branch: `git checkout -b feature/your-feature`
