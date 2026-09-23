@@ -25,7 +25,9 @@ else:
 # Groq token pricing (approximate, per 1M tokens, USD)
 _GROQ_PRICING = {
     "openai/gpt-oss-20b": {"input": 0.59, "output": 0.79},
-    "groq/compound-mini": {"input": 0.05, "output": 0.08},
+    "openai/gpt-oss-120b": {"input": 0.59, "output": 0.79},
+    "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
+    "gemini-flash-lite-latest": {"input": 0.075, "output": 0.30},
 }
 _TAVILY_COST_PER_CALL = 0.001  # ~$0.001 per Tavily search call
 

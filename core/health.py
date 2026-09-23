@@ -53,7 +53,8 @@ class HealthChecker:
                 return {"status": "no_config", "error": "GROQ_API_KEY not set"}
 
             from langchain_groq import ChatGroq
-            llm = ChatGroq(model="groq/compound-mini", api_key=GROQ_API_KEY)
+            from core.config import GROQ_CRITIC_MODEL
+            llm = ChatGroq(model=GROQ_CRITIC_MODEL, api_key=GROQ_API_KEY)
             future = asyncio.get_event_loop().run_in_executor(
                 None, llm.invoke, "hi"
             )
