@@ -13,15 +13,32 @@ import os
 import aiosqlite
 
 def should_loop(state: ResearchState) -> str:
-    """Decides what happens after the Critic runs."""
+    """Decide what happens after the Critic runs.
+
+    Early-exit rules:
+    1. Score at/above threshold -> report immediately.
+    2. Hit max iterations -> force report.
+    3. Objective score >= 0.72 AND iteration >= 1 -> report.
+       LLM score plateaus when sources are well-covered; extra loops waste ~20s.
+    4. Score plateau between iterations -> report.
+    """
     score = state.get("confidence_score", 0.0)
     iterations = state.get("iteration_count", 0)
+    objective = state.get("score_breakdown", {}).get("objective_score", 0.0)
+    prev_score = state.get("prev_confidence_score", -1.0)
 
     if score >= CONFIDENCE_THRESHOLD:
         return "reporter"
     if iterations >= MAX_ITERATIONS:
-        return "reporter"  # force stop even if confidence is low
-    return "researcher"  # loop back for more research
+        return "reporter"
+    # Objective already good -- LLM score cannot improve further, skip extra loop
+    if objective >= 0.72 and iterations >= 1:
+        return "reporter"
+    # Score plateaued -- more research will not help
+    if iterations >= 1 and abs(score - prev_score) < 0.005:
+        return "reporter"
+    return "researcher"
+
 
 
 def route_after_router(state: ResearchState) -> str:
@@ -32,7 +49,8 @@ def route_after_router(state: ResearchState) -> str:
 
 
 # Checkpoint database path
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "checkpoints.sqlite"))
+from core.config import DATA_DIR
+DB_PATH = os.path.join(DATA_DIR, "checkpoints.sqlite")
 CONN_STR = f"sqlite:///{DB_PATH}"
 
 

@@ -1,0 +1,45 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.0
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  research-assistant:
+    build: .
+    container_name: neuraldesk
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    env_file: .env
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./data:/app/data
+      - ./model_cache:/app/model_cache
+    environment:
+      - DATA_DIR=/app/data
+      - MODEL_CACHE_DIR=/app/model_cache
+      - PYTHONUNBUFFERED=1
+      - PREWARM_EMBEDDINGS=1
+      - QDRANT_URL=http://qdrant:6333
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  qdrant_storage:

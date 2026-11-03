@@ -1,4 +1,15 @@
 # ruff: noqa: E402
+import os
+import asyncio
+import concurrent.futures
+import re
+from urllib.parse import urlparse
+from typing import Dict, Any, List
+
+from dotenv import load_dotenv
+from tavily import TavilyClient
+from langchain_groq import ChatGroq
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from core.config import (
     GROQ_RESEARCHER_MODEL,
@@ -10,39 +21,31 @@ from core.config import (
     TAVILY_MAX_RESULTS,
     AGENT_TIMEOUT,
 )
-import os
-import asyncio
-import concurrent.futures
-
-from dotenv import load_dotenv
-from tavily import TavilyClient
-from langchain_groq import ChatGroq
-from tenacity import retry, stop_after_attempt, wait_exponential
-
 from core.state import ResearchState
 from core.logger import get_logger
 from core.metrics import metrics
 
 load_dotenv()
 
-
 logger = get_logger(__name__)
 
-tavily = TavilyClient(
-    api_key=os.getenv("TAVILY_API_KEY")
-)
+tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
 llm = ChatGroq(
     model=GROQ_RESEARCHER_MODEL,
-    api_key=GROQ_API_KEY
+    api_key=GROQ_API_KEY,
+    temperature=0.1
 )
 
-
-# ============================================================
-# TAVILY RETRY & CACHE
-# ============================================================
+# Known low-quality / paywalled sales / ad-heavy domains to deprioritize
+BLOCKED_OR_PENALIZED_DOMAINS = {
+    "idtechex.com", "researchandmarkets.com", "transparencymarketresearch.com",
+    "marketresearchfuture.com", "verifiedmarketresearch.com", "grandviewresearch.com",
+    "expertmarketresearch.com", "fortunebusinessinsights.com"
+}
 
 _TAVILY_CACHE = {}
+
 
 @retry(
     stop=stop_after_attempt(RETRY_ATTEMPTS),
@@ -52,501 +55,173 @@ _TAVILY_CACHE = {}
         max=RETRY_WAIT_MAX
     )
 )
-def search_with_retry(client, task):
+def search_with_retry(client: TavilyClient, task: str) -> Dict[str, Any]:
     """
-    Perform a Tavily search with automatic retries
-    if the request temporarily fails.
-    Caches results to avoid redundant web searches on loops.
+    Perform a Tavily search with automatic retries and caching.
+    Uses search_depth='advanced' and news topic detection for fresh current events.
     """
-
-    # Remove numbering/bullets from Planner's task
-    clean_task = task.strip().lstrip(
-        "0123456789.-*#\t "
-    )
-    
+    clean_task = task.strip().lstrip("0123456789.-*#\t ")
     if clean_task in _TAVILY_CACHE:
         return _TAVILY_CACHE[clean_task]
 
-    result = client.search(
-        query=clean_task,
-        max_results=TAVILY_MAX_RESULTS,
-        search_depth="advanced",
-        include_raw_content=False
-    )
+    # Detect if freshness / news filter is needed (e.g. 2025, 2026, latest, trends, delivery)
+    is_news_or_recent = any(kw in clean_task.lower() for kw in ["2025", "2026", "latest", "recent", "trends", "deliveries", "quarter", "q1", "q2", "q3", "q4"])
     
+    search_kwargs = {
+        "query": clean_task,
+        "max_results": TAVILY_MAX_RESULTS,
+        "search_depth": "advanced",
+        "include_raw_content": False,
+    }
+    
+    if is_news_or_recent:
+        search_kwargs["topic"] = "news"
+        search_kwargs["days"] = 365
+
+    try:
+        result = client.search(**search_kwargs)
+    except Exception as e:
+        # Fallback to general search if news filter raises error
+        if is_news_or_recent:
+            search_kwargs.pop("topic", None)
+            search_kwargs.pop("days", None)
+            result = client.search(**search_kwargs)
+        else:
+            raise e
+
     _TAVILY_CACHE[clean_task] = result
     return result
 
 
-# ============================================================
-# LLM RETRY
-# ============================================================
-
-@retry(
-    stop=stop_after_attempt(RETRY_ATTEMPTS),
-    wait=wait_exponential(
-        multiplier=RETRY_MULTIPLIER,
-        min=RETRY_WAIT_MIN,
-        max=RETRY_WAIT_MAX
-    )
-)
-def invoke_llm_with_retry(prompt):
-    """
-    Invoke the LLM with automatic retries.
-    """
-
-    return llm.invoke(prompt)
+def _normalize_fingerprint(text: str) -> str:
+    """Create normalized 80-char fingerprint to filter duplicate snippets."""
+    return re.sub(r"\s+", " ", text.lower().strip())[:80]
 
 
-# ============================================================
-# SEARCH ONE TASK
-# ============================================================
-
-async def _process_task(
-    task: str,
-    executor: concurrent.futures.Executor
-) -> dict:
-    """
-    Execute Tavily search for one research task.
-
-    Important:
-    This function ONLY performs retrieval.
-
-    It does NOT polish or verify the results.
-
-    Polishing and verification happen after ALL
-    research tasks have completed.
-    """
-
+async def _process_task(task: str, executor: concurrent.futures.Executor) -> Dict[str, Any]:
+    """Execute Tavily search for one research sub-task with domain capping and duplicate filtering."""
     loop = asyncio.get_event_loop()
 
     def _do_search():
         try:
+            search_response = search_with_retry(tavily, task)
+            raw_results = search_response.get("results", [])
 
-            # ------------------------------------------------
-            # 1. Search Tavily
-            # ------------------------------------------------
-
-            search_response = search_with_retry(
-                tavily,
-                task
-            )
-
-            raw_items = []
+            processed_items = []
             task_sources = []
+            domain_counts = {}
+            seen_fingerprints = set()
 
-            # ------------------------------------------------
-            # 2. Collect raw results
-            # ------------------------------------------------
+            for res in raw_results:
+                title = res.get("title", "Untitled Source").strip()
+                url = res.get("url", "").strip()
+                content = res.get("content", "").strip()
+                published_date = res.get("published_date") or res.get("publishedDate") or "Recent"
 
-            for result in search_response.get(
-                "results",
-                []
-            ):
+                if not url or not content or len(content) < 50:
+                    continue
 
-                title = result.get(
-                    "title",
-                    "Untitled Source"
-                )
+                domain = urlparse(url).netloc.lower().lstrip("www.")
 
-                url = result.get(
-                    "url",
-                    ""
-                )
+                # Filter paywalled sales / low-value market pitch aggregators
+                if domain in BLOCKED_OR_PENALIZED_DOMAINS:
+                    logger.debug(f"Skipping penalized sales domain: {domain}")
+                    continue
 
-                content = result.get(
-                    "content",
-                    ""
-                )
+                # Domain capping: max 2 passages per domain per subtask
+                if domain_counts.get(domain, 0) >= 2:
+                    logger.debug(f"Domain cap reached for: {domain}")
+                    continue
 
-                raw_items.append(
-                    f"Source: [{title}]({url})\n"
+                # Near-duplicate passage filtering
+                fingerprint = _normalize_fingerprint(content)
+                if fingerprint in seen_fingerprints:
+                    continue
+                seen_fingerprints.add(fingerprint)
+
+                domain_counts[domain] = domain_counts.get(domain, 0) + 1
+
+                formatted_item = (
+                    f"Subtask: {task}\n"
+                    f"Title: {title}\n"
+                    f"Domain: {domain}\n"
+                    f"Date: {published_date}\n"
                     f"URL: {url}\n"
                     f"Content: {content}"
                 )
-                if url:
-                    task_sources.append({"title": title, "url": url})
+                processed_items.append(formatted_item)
+                task_sources.append({
+                    "title": title,
+                    "url": url,
+                    "domain": domain,
+                    "date": str(published_date)
+                })
 
-            # ------------------------------------------------
-            # 3. Handle no results
-            # ------------------------------------------------
+            if not processed_items:
+                logger.info(f"No valid results found for: {task}")
+                return {"findings": [], "sources": []}
 
-            if not raw_items:
-
-                logger.info(
-                    f"No results found for: {task}"
-                )
-
-                return {"findings": "", "sources": []}
-
-            logger.info(
-                f"Completed search for: {task}"
-            )
-
-            # ------------------------------------------------
-            # 4. Return raw research
-            # ------------------------------------------------
-
+            logger.info(f"Completed search for: {task} ({len(processed_items)} quality snippets)")
             return {
-                "findings": f"Research Findings for '{task}':\n" + "\n\n".join(raw_items),
+                "findings": processed_items,
                 "sources": task_sources
             }
-
         except Exception as e:
-
-            logger.warning(
-                f"Failed on task '{task}' "
-                f"after retries: {e}"
-            )
-
-            return {"findings": "", "sources": []}
+            logger.warning(f"Failed on task '{task}' after retries: {e}")
+            return {"findings": [], "sources": []}
 
     try:
-
-        # ----------------------------------------------------
-        # Run blocking Tavily call inside executor
-        # ----------------------------------------------------
-
         result = await asyncio.wait_for(
-            loop.run_in_executor(
-                executor,
-                _do_search
-            ),
+            loop.run_in_executor(executor, _do_search),
             timeout=AGENT_TIMEOUT
         )
-
-        return result or {"findings": "", "sources": []}
-
+        return result or {"findings": [], "sources": []}
     except asyncio.TimeoutError:
-
-        logger.error(
-            f"Task '{task}' timed out "
-            f"after {AGENT_TIMEOUT}s — skipping"
-        )
-
-        return {"findings": "", "sources": []}
+        logger.error(f"Task '{task}' timed out after {AGENT_TIMEOUT}s — skipping")
+        return {"findings": [], "sources": []}
 
 
-# ============================================================
-# RESEARCHER NODE
-# ============================================================
-
-async def researcher_node(
-    state: ResearchState
-) -> ResearchState:
+async def researcher_node(state: ResearchState) -> ResearchState:
     """
-    Main Researcher node.
-
-    Flow:
-
-        Planner
-           ↓
-        Multiple tasks
-           ↓
-        Parallel Tavily searches
-           ↓
-        Gather ALL raw research
-           ↓
-        LLM Pass 1: Polish
-           ↓
-        LLM Pass 2: Verify
-           ↓
-        Verified research
+    Researcher node without lossy truncation.
+    Gathers structured factual evidence tagged by sub-task and passes it directly to Qdrant/Retriever.
     """
+    plan = state.get("plan", [])
+    if not plan:
+        plan = [state.get("query", "")]
 
-    plan = state["plan"]
-
-    all_results = []
+    all_findings = []
     all_sources = []
 
-    logger.info(
-        f"Starting parallel research "
-        f"for {len(plan)} sub-tasks"
-    )
+    logger.info(f"Starting parallel research for {len(plan)} sub-tasks")
 
-    # ========================================================
-    # STEP 1: PARALLEL RESEARCH
-    # ========================================================
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(plan) * 2, 10)) as executor:
+        async_tasks = [_process_task(task, executor) for task in plan]
+        results = await asyncio.gather(*async_tasks, return_exceptions=True)
 
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=10
-    ) as executor:
+        for res in results:
+            if isinstance(res, Exception):
+                logger.error(f"Task failed with exception: {res}")
+            elif res and res.get("findings"):
+                all_findings.extend(res["findings"])
+                all_sources.extend(res.get("sources", []))
 
-        async_tasks = [
-            _process_task(
-                task,
-                executor
-            )
-            for task in plan
-        ]
+    # Deduplicate sources by URL
+    unique_sources_map = {}
+    for s in all_sources:
+        u = s.get("url")
+        if u and u not in unique_sources_map:
+            unique_sources_map[u] = s
 
-        results = await asyncio.gather(
-            *async_tasks,
-            return_exceptions=True
-        )
+    state["sources"] = list(unique_sources_map.values())
+    state["research_results"] = all_findings
 
-        # ----------------------------------------------------
-        # Collect results from every task
-        # ----------------------------------------------------
-
-        for result in results:
-
-            if isinstance(result, Exception):
-
-                logger.error(
-                    f"Task failed with exception: "
-                    f"{result}"
-                )
-
-            elif result and result.get("findings"):
-                all_results.append(result["findings"])
-                all_sources.extend(result.get("sources", []))
-
-    state["sources"] = all_sources
-
-    logger.info(
-        f"Raw research complete — "
-        f"{len(all_results)} task results gathered"
-    )
-
-    # ========================================================
-    # STEP 2: COMBINE ALL RESEARCH
-    # ========================================================
-
-    raw_research = "\n\n".join(
-        all_results
-    )
-    
-    # Truncate to prevent APIStatusError (context length exceeded) on smaller models
-    max_chars = 20000
-    if len(raw_research) > max_chars:
-        logger.warning(f"Truncating raw research from {len(raw_research)} to {max_chars} characters to fit context window.")
-        raw_research = raw_research[:max_chars] + "\n...[TRUNCATED]"
-
-    # If every Tavily search failed
-    if not raw_research:
-
-        logger.warning(
-            "No research results available "
-            "for polishing."
-        )
-
-        state["research_results"] = []
-
-        return state
-
-    # ========================================================
-    # STEP 3: PASS ONE - POLISH
-    # ========================================================
-
-    polish_prompt = f"""
-You are a research synthesis assistant.
-
-The following are raw research findings collected
-from multiple research tasks.
-
-RAW RESEARCH
-============
-
-{raw_research}
-
-TASK
-====
-
-Create ONE polished and cohesive research summary
-that combines the relevant findings from all research
-tasks.
-
-REQUIREMENTS
-============
-
-1. Preserve important factual information.
-2. Do not invent information.
-3. Do not use your own outside knowledge.
-4. Remove obvious duplication.
-5. Organize related findings together.
-6. Keep the research relevant to the original tasks.
-7. Preserve source URLs for claims whenever available.
-8. Do not remove important source information.
-9. Clearly distinguish different findings when sources
-   disagree.
-10. The output must remain grounded in the RAW RESEARCH.
-
-Return ONLY the polished research.
-"""
-
-    try:
-
-        logger.info(
-            "Starting research polishing..."
-        )
-
-        polished_result = invoke_llm_with_retry(
-            polish_prompt
-        ).content
-
-        logger.info(
-            f"Research polishing completed. Length: {len(polished_result)}"
-        )
-
-    except Exception as e:
-
-        logger.error(
-            f"Research polishing failed: {e}"
-        )
-
-        # If polishing fails, keep the raw research
-        polished_result = raw_research
-
-    # ========================================================
-    # STEP 4: PASS TWO - VERIFICATION
-    # ========================================================
-
-    verify_prompt = f"""
-You are a research verification assistant.
-
-Your job is to verify a polished research summary
-against the original raw research.
-
-RAW RESEARCH
-============
-
-{raw_research}
-
-POLISHED RESEARCH
-=================
-
-{polished_result}
-
-VERIFICATION RULES
-==================
-
-1. Treat RAW RESEARCH as the only source of truth.
-2. Remove claims that are not supported by RAW RESEARCH.
-3. IMPORTANT: Be lenient, not strict. If a claim is reasonably 
-   supported by the RAW RESEARCH — even if worded differently, 
-   summarized, or combined from multiple sentences — KEEP it. 
-   Only remove claims that are clearly invented, contradicted by 
-   the RAW RESEARCH, or completely absent from it. Do not delete 
-   large sections just because the exact wording doesn't match. 
-   Your default should be to preserve content, not delete it.
-4. Do not introduce new information.
-5. Do not use your own knowledge.
-6. Preserve claims that are directly supported.
-7. Preserve source URLs where available.
-8. Remove unsupported numbers, dates, statistics,
-   names, or factual claims.
-9. If the polished research combines multiple sources,
-   make sure the combination is actually supported.
-10. Do not strengthen claims beyond what the sources say.
-11. Your output should normally be close in length to the polished 
-    research. A large reduction in length is a sign you are being 
-    too strict — reconsider before removing large sections.
-12. Output ONLY the final verified research.
-
-FINAL OUTPUT
-============
-
-Return the verified research only.
-"""
-
-    try:
-
-        logger.info(
-            "Starting research verification..."
-        )
-
-        verified_result = invoke_llm_with_retry(
-            verify_prompt
-        ).content
-        
-        if not verified_result.strip():
-            logger.warning("Verification returned an empty result. Falling back to the polished result.")
-            verified_result = polished_result
-
-        logger.info(
-            f"Research verification completed. Length: {len(verified_result)}"
-        )
-
-    except Exception as e:
-
-        logger.error(
-            f"Research verification failed: {e}"
-        )
-
-        # If verification fails, keep polished result
-        verified_result = polished_result
-
-    # ========================================================
-    # STEP 5: SAVE FINAL RESEARCH
-    # ========================================================
-
-    state["research_results"] = [
-        verified_result
-    ]
-
-    # ========================================================
-    # METRICS
-    # ========================================================
-
-    input_tokens = sum(
-        len(p)
-        for p in plan
-    )
-
-    output_tokens = sum(
-        len(r)
-        for r in state["research_results"]
-    )
+    logger.info(f"Research gathering complete: {len(all_findings)} structured passages preserved (zero truncation).")
 
     metrics.end_agent(
         "researcher",
-        input_tokens=input_tokens,
-        output_tokens=output_tokens
-    )
-
-    logger.info(
-        "Researcher node completed successfully."
+        input_tokens=sum(len(p) for p in plan),
+        output_tokens=sum(len(f) for f in all_findings)
     )
 
     return state
-
-
-# ============================================================
-# LOCAL TEST
-# ============================================================
-
-if __name__ == "__main__":
-
-    test_state = {
-
-        "plan": [
-
-            "Identify the primary causes of climate "
-            "change affecting coral reefs",
-
-            "Research coral bleaching effects"
-
-        ]
-
-    }
-
-    result = asyncio.run(
-        researcher_node(test_state)
-    )
-
-    print("\n")
-    print("=" * 70)
-    print("FINAL VERIFIED RESEARCH")
-    print("=" * 70)
-    print("\n")
-
-    for r in result["research_results"]:
-
-        try:
-            print(r)
-        except UnicodeEncodeError:
-            print(r.encode("utf-8", "replace").decode("utf-8"))
-
-        print("\n")
-        print("-" * 70)

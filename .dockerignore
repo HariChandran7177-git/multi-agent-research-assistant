@@ -1,25 +1,48 @@
-# Virtual environment
-.venv/
-venv/
-ENV/
+.env
+.env.*
+!.env.example
 
-# Version control
-.git/
-.gitignore
-
-# Cache and bytecode
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-
-# Databases and local state
+# Databases (persisted via volume, not baked into image)
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-fallback_errors.log
+data/
 
-# IDE and environment files
-.env
-.devcontainer/
+# Model cache (persisted via volume)
+model_cache/
+
+# Git
+.git
+.gitignore
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
 .vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Logs (persisted via volume)
+*.log
+
+# Misc
+*.md
+LICENSE

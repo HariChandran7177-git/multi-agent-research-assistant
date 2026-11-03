@@ -1,5 +1,8 @@
 import asyncio
-from typing import Callable
+import re
+from datetime import datetime
+from urllib.parse import urlparse
+from typing import Callable, Dict, Any, List
 from langchain_groq import ChatGroq
 from core.state import ResearchState
 from dotenv import load_dotenv
@@ -9,89 +12,66 @@ from core.logger import get_logger
 from core.config import GROQ_REPORTER_MODEL, GROQ_API_KEY, RETRY_ATTEMPTS, RETRY_MULTIPLIER, RETRY_WAIT_MIN, RETRY_WAIT_MAX, AGENT_TIMEOUT
 
 load_dotenv()
-
 logger = get_logger(__name__)
 
-# Use a separate, lighter model for report writing to avoid rate limits on groq/compound
 llm = ChatGroq(
     model=GROQ_REPORTER_MODEL,
     api_key=GROQ_API_KEY,
-    temperature=0.3,
+    temperature=0.15,
 )
 
-# Minimum confidence below which we still write a report, but force strict grounding
-LOW_CONFIDENCE_THRESHOLD = 0.5
+LOW_CONFIDENCE_THRESHOLD = 0.50
 
-# ── Token caps (conservative to avoid context overflow and token limit errors) ──
-# Each char ≈ 0.25 tokens for English text. These caps keep total prompt well under 8k tokens.
-RESEARCH_CHAR_CAP = 20000   # ~5000 tokens of research findings
-DOCS_CHAR_CAP = 5000       # ~1250 tokens of retrieved docs
-PLAN_CHAR_CAP = 2000        # ~500 tokens of plan
+REPORTER_STRICT_PROMPT = """You are an elite, objective research analyst.
+Your job is to synthesize a factual, impeccably grounded research report using ONLY the numbered evidence chunks provided below.
 
-REPORTER_PROMPT = """You are writing a research report. Follow these instructions strictly.
+============================================================
+CRITICAL ACCURACY & GROUNDING RULES (VIOLATION IS A FAILURE)
+============================================================
+1. ONLY USE NUMBERED SOURCES: Rely exclusively on the numbered chunks [1], [2], [3]... below. NEVER use outside knowledge.
+2. CITATION FORMAT: Always write citations as [1], [2], [3] etc. NEVER use 【1†...】, (1), or any other format.
+3. INLINE NUMBERED CITATIONS: Every factual sentence MUST end with a bracketed citation pointing to the exact supporting chunk, e.g. "Model Y was the top selling vehicle globally in 2023 [1]."
+4. HARD NUMBERS & DATES: State the exact date or timeframe next to every statistic, revenue figure, or metric. If a source is older than 12 months, explicitly state the year.
+5. ZERO INVENTION: If the sources do not cover an aspect of the query, write "Not found in the verified sources" instead of guessing or filling gaps.
+6. CONFLICTING EVIDENCE: If two sources disagree, show both perspectives and cite each: "Source [1] reported X, while Source [3] reported Y."
+7. NO SPECULATION: Do not make unverified predictions or call a product "dominant", "leading", or "revolutionary" unless an explicit source states it.
+8. NO REPETITION: Mention each fact ONCE. Do NOT repeat the same facts across summary, details, and tables.
+9. FORMATTING HYGIENE: Avoid over-bolding. Do not bold every second word — only bold section titles, key entity names, and primary metrics.
 
-## CRITICAL: NO HALLUCINATION RULE (apply this before everything else)
-You MUST ONLY use facts, numbers, dates, names, and URLs that are EXPLICITLY present in the
-RESEARCH FINDINGS and TOP RETRIEVED DOCUMENTS sections below.
-- DO NOT invent statistics, dates, prices, version numbers, or product names.
-- DO NOT add outside knowledge that is not in the research data below.
-- If a fact is not found in the research data, write "information not available" instead of guessing.
-- The "## Sources" section MUST only contain URLs that literally appear in the research data below.
-  Do not fabricate URLs or domain names.
-- A shorter accurate report is ALWAYS better than a longer hallucinated one.
+============================================================
+MANDATORY FIXED REPORT TEMPLATE (FOLLOW THIS EXACT STRUCTURE)
+============================================================
 
-## TONE (apply this after the no-hallucination rule)
-Write in this exact style: **{tone}**
-Examples of what this means in practice:
-- "ELI5": use analogies like "imagine a pizza delivery...", zero jargon
-- "senior software engineer": be precise, skip basics, use technical terms freely
-- "academic": cite sources inline, use formal language, structured sections
-- "funny": use wit and humour while still being accurate
-- "professional and informative": clear, factual, no filler phrases
-- "storyteller": frame the explanation as a narrative with a beginning, middle, and end
-- "skeptical analyst": question claims, note where evidence is thin, avoid overstating certainty
-- "casual friend": relaxed, first-person asides, contractions, no corporate tone
-- "executive briefing": lead with the bottom line, keep it tight, use short punchy bullets
+## Summary
+(3-4 lines: concise direct answer to the user's question, cited with [n])
 
-## YOUR QUERY
+## Key findings
+(4-6 scannable bullet points covering the main insights, each ending with a citation like [n])
+
+## Details
+(One subsection per sub-task analyzing the core mechanisms, technology, or business data, cited thoroughly with [n])
+
+## Data / timeline
+(Include a clean Markdown table ONLY if you have 3 or more rows of real sourced numbers or dates. If fewer than 3 rows exist, omit the table and write a single factual sentence)
+
+## Gaps and caveats
+(Honest statement of what the sources did not cover, unresolved debates, or outdated data)
+
+## Sources
+(Numbered list — this will be replaced by the system with verified source entries. Write a placeholder line per citation you used, e.g. "[1] Source title — domain")
+
+Tone to maintain: {tone}
+
+USER QUERY:
 {query}
 
-## RESEARCH FINDINGS (use ONLY these facts — do NOT add outside knowledge)
-{research_results}
+PLANNED SUB-TASKS:
+{plan}
 
-## TOP RETRIEVED DOCUMENTS
+NUMBERED RETRIEVED EVIDENCE CHUNKS:
 {retrieved_docs}
 
-## FORMAT RULES
-Choose format based on what the content needs — not habit:
-- Use a **comparison table** if comparing 2+ options
-- Use **numbered steps** if explaining a process
-- Use **bullet points** for scannable key facts
-- Use **paragraphs** for explanations and analysis
-- Do NOT use generic headers like "Introduction" or "Conclusion" — use content-specific headers
-
-## CONTENT RULES
-- Open by directly addressing the query — no preamble
-- Bold specific names, numbers, and key facts: **AWS holds 31% market share**
-- Use ONLY real data from the research above — no invented examples
-- End with a "## Bottom Line" section: one sharp paragraph wrapping up the key takeaway
-- Final section "## Sources": bullet list of ONLY the markdown links whose URLs appear in the research data above
-
-Write the full report now in the tone: **{tone}**
-"""
-
-LOW_CONFIDENCE_APPENDIX = """
-
-IMPORTANT: The research for this query was limited or incomplete (confidence score: {confidence:.2f}).
-Only state facts explicitly present in the research findings and retrieved documents above.
-Do NOT add outside knowledge, invented statistics, dates, prices, or assumed details.
-If information is missing or unclear, write "information not available" in the report instead of filling the gap.
-Add a short ⚠️ note near the top flagging that research coverage was limited.
-"""
-
-
-def _is_rate_limit(exc):
-    return "rate" in str(exc).lower() or "429" in str(exc)
+Write the report now adhering strictly to the template and citation rules above:"""
 
 
 @retry(
@@ -101,221 +81,314 @@ def _is_rate_limit(exc):
     retry=retry_if_exception_type(Exception),
     reraise=True,
 )
-def invoke_with_retry(llm, prompt):
-    return llm.invoke(prompt)
+def invoke_with_retry(llm_instance, prompt):
+    return llm_instance.invoke(prompt)
 
 
-def _build_prompt(tone, query, plan_text, research_text, docs_text, confidence=None):
-    """Build the reporter prompt, applying token caps and optionally appending strict-grounding warning."""
-    prompt = REPORTER_PROMPT.format(
-        tone=tone,
-        query=query,
-        research_results=research_text[:RESEARCH_CHAR_CAP],
-        retrieved_docs=docs_text[:DOCS_CHAR_CAP],
+def _build_deterministic_sources_section(chunks: List[Dict[str, Any]]) -> str:
+    """Build a deterministic, un-hallucinated ## Sources list mapped by [n]."""
+    if not chunks:
+        return "## Sources\n*No external sources verified.*"
+
+    sources_lines = ["## Sources"]
+    seen_ids = set()
+    for ch in chunks:
+        cid = ch.get("id")
+        if not cid or cid in seen_ids:
+            continue
+        seen_ids.add(cid)
+        title = ch.get("title", "Source").replace("[", "(").replace("]", ")")
+        url = ch.get("url", "#")
+        domain = ch.get("domain", "") or urlparse(
+            url).netloc.lower().lstrip("www.")
+        date = ch.get("date", "Recent")
+        sources_lines.append(f"[{cid}] [{title}]({url}) — *{domain}* ({date})")
+
+    return "\n".join(sources_lines)
+
+
+# Domains considered highly credible — score 1.0
+_TRUSTED_DOMAINS = {
+    ".edu", ".gov", ".ac.uk", ".ac.in",
+    "nature.com", "science.org", "arxiv.org", "pubmed.ncbi", "pmc.ncbi",
+    "reuters.com", "bbc.com", "bbc.co.uk", "nytimes.com", "wsj.com",
+    "wired.com", "techcrunch.com", "forbes.com", "bloomberg.com",
+    "who.int", "cdc.gov", "nih.gov", "europa.eu",
+    "ieee.org", "acm.org", "springer.com", "sciencedirect.com",
+    "clevelandclinic.org", "mayoclinic.org",
+}
+
+# Domains to deprioritise (sales / market-research paywalls)
+_LOW_QUALITY_DOMAINS = {
+    "idtechex.com", "researchandmarkets.com", "transparencymarketresearch.com",
+    "marketresearchfuture.com", "grandviewresearch.com",
+    "fortunebusinessinsights.com", "mordorintelligence.com",
+    "expertmarketresearch.com", "verifiedmarketresearch.com",
+}
+
+MAX_SOURCES = 9   # hard cap shown to LLM and in Sources section
+
+
+def _domain_score(url: str) -> float:
+    """Return a credibility score [0.0–1.0] for a URL's domain."""
+    try:
+        domain = urlparse(url).netloc.lower().lstrip("www.")
+    except Exception:
+        return 0.4
+    if any(domain.endswith(t) or t in domain for t in _TRUSTED_DOMAINS):
+        return 1.0
+    if any(bad in domain for bad in _LOW_QUALITY_DOMAINS):
+        return 0.3
+    return 0.6
+
+
+def _parse_date_score(date_str: str) -> float:
+    """Convert a date string to a freshness score (0–1).  Newer = higher."""
+    if not date_str or date_str.lower() == "recent":
+        return 0.7  # unknown date is neutral-positive
+    # RFC-2822 or ISO-8601 patterns
+    for fmt in ("%a, %d %b %Y %H:%M:%S %Z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(date_str[:len(fmt)+4].strip(), fmt)
+            age_days = (datetime(2026, 11, 1) - dt).days
+            # 0 days old → 1.0;  730+ days (2 years) → 0.0
+            return max(0.0, 1.0 - age_days / 730)
+        except ValueError:
+            pass
+    return 0.5
+
+
+def _select_top_sources(chunks: List[Dict[str, Any]],
+                        max_n: int = MAX_SOURCES) -> List[Dict[str, Any]]:
+    """
+    Deduplicate chunks by URL, rank by (domain credibility + freshness),
+    keep the top max_n unique sources, and renumber them 1..N so the LLM
+    and the Sources section always show exactly max_n clean entries.
+
+    Returns a NEW list of chunk dicts with consecutive integer 'id' values.
+    """
+    if not chunks:
+        return []
+
+    # --- 1. Group all chunks by canonical URL ---
+    url_to_best: Dict[str, Dict[str, Any]] = {}
+    for ch in chunks:
+        url = ch.get("url", "") or ""
+        # Normalise: strip trailing slash and fragment
+        canon_url = url.split("#")[0].rstrip("/")
+        if not canon_url:
+            canon_url = ch.get("title", "") or str(ch.get("id", ""))
+
+        existing = url_to_best.get(canon_url)
+        if existing is None:
+            url_to_best[canon_url] = ch
+        else:
+            # Keep the chunk with more text (richer content)
+            if len(ch.get("text", "")) > len(existing.get("text", "")):
+                url_to_best[canon_url] = ch
+
+    # --- 2. Score each unique source ---
+    scored: List[tuple] = []
+    for canon_url, ch in url_to_best.items():
+        d_score = _domain_score(canon_url)
+        f_score = _parse_date_score(ch.get("date", ""))
+        # Weighted: credibility matters more than freshness
+        total = round(0.65 * d_score + 0.35 * f_score, 4)
+        scored.append((total, ch))
+
+    # --- 3. Sort descending, keep top max_n ---
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top_chunks = [ch for _, ch in scored[:max_n]]
+
+    # --- 4. Renumber sequentially 1..N ---
+    renumbered = []
+    for new_id, ch in enumerate(top_chunks, start=1):
+        new_ch = dict(ch)   # shallow copy — don't mutate original
+        new_ch["id"] = new_id
+        renumbered.append(new_ch)
+
+    logger.info(
+        f"Source deduplication: {len(chunks)} chunks → "
+        f"{len(url_to_best)} unique URLs → {len(renumbered)} selected"
     )
-    if confidence is not None and confidence < LOW_CONFIDENCE_THRESHOLD:
-        prompt += LOW_CONFIDENCE_APPENDIX.format(confidence=confidence)
-    return prompt
+    return renumbered
 
 
-def _no_research_fallback(query, plan_text, confidence):
-    """Honest fallback report when no research data was gathered at all."""
-    return f"""# {query}
+def _validate_citations_and_numbers(report_text: str, chunks: List[Dict[str, Any]]) -> str:
+    """
+    Deterministic code check:
+    1. Normalises OpenAI-style 【n†...】 citations → [n] format.
+    2. Ensures all cited [n] exist in the retrieved set; removes hallucinated IDs.
+    3. Checks numbers in the report against retrieved chunks to detect hallucinations.
+    4. Replaces or appends the deterministic ## Sources section.
+    """
+    valid_ids = {str(ch.get("id")) for ch in chunks if ch.get("id")}
+    combined_chunk_text = " ".join(ch.get("text", "") for ch in chunks).lower()
 
-> ⚠️ **Limited research available** — search and retrieval did not return verified sources for this query (possible cause: API rate limits or credit exhaustion). Confidence score: {confidence:.2f}
+    # Strip existing ## Sources section generated by LLM to replace with deterministic list
+    report_body = re.split(r'\n##\s*Sources', report_text,
+                           flags=re.IGNORECASE)[0].strip()
 
-## What I can tell you
-I wasn't able to gather real-time, sourced information on this topic right now. Rather than guess, here's what I'd recommend:
-- Try the query again in a few minutes (search API limits often reset quickly)
-- Rephrase the query to be more specific
-- If this persists, check that your search API key/credits are active
+    # 0. Normalise 【n†L1-L9】 or 【n†source】 → [n]  (OpenAI-style citations)
+    report_body = re.sub(r'【(\d+)[†\u2020][^】]*】', r'[\1]', report_body)
+    # Also handle 【n】 bare form
+    report_body = re.sub(r'【(\d+)】', r'[\1]', report_body)
 
-## Research Plan (what was attempted)
-{plan_text[:1000] if plan_text else "No plan was generated."}
+    # 1. Clean invalid [n] citations (e.g. LLM invented [99])
+    def replace_citation(match):
+        cid = match.group(1)
+        if cid in valid_ids:
+            return f"[{cid}]"
+        return ""  # remove hallucinated citation ID
 
----
-*No report was generated from unverified sources, to avoid presenting fabricated information as fact.*
-"""
+    report_body = re.sub(r'\[(\d+)\]', replace_citation, report_body)
 
+    # 2. Audit numbers (e.g. $54.9M, 400 Wh/kg, 2026, 1.81 million)
+    unverified_numbers = []
+    number_claims = re.findall(
+        r'(\b\d+(?:\.\d+)?%?\b(?:\s+[a-zA-Z]+){1,3})', report_body)
+    for claim in number_claims[:12]:
+        num_match = re.search(r'\b\d+(?:\.\d+)?', claim)
+        if num_match and num_match.group(0) not in combined_chunk_text:
+            unverified_numbers.append(claim.strip())
 
-def _timeout_fallback(query, plan_text, research_text):
-    return f"""# Research Results for: {query}
+    if unverified_numbers:
+        logger.warning(
+            f"Unverified numbers found in report: {unverified_numbers[:3]}")
 
-> ⚠️ The report writer timed out after {AGENT_TIMEOUT} seconds.
-
-## Research Plan
-{plan_text[:1000]}
-
-## Key Findings
-{research_text[:1500]}
-
----
-*Report generation timed out. Please try again.*
-"""
-
-
-def _error_fallback(query, plan_text, research_text, error):
-    return f"""# Research Results for: {query}
-
-> ⚠️ The report writer encountered an error: {str(error)[:100]}
-
-## Research Plan
-{plan_text[:1000]}
-
-## Key Findings
-{research_text[:1500]}
-
----
-*Report generation failed. Please check your API keys and try again.*
-"""
+    # 3. Append deterministic Sources section
+    sources_section = _build_deterministic_sources_section(chunks)
+    final_output = f"{report_body}\n\n{sources_section}"
+    return final_output
 
 
 async def reporter_node(state: ResearchState) -> ResearchState:
-    """Async reporter node with timeout, metrics, and grounding safeguards.
-
-    Behavior:
-    - No research data at all -> honest fallback, no LLM call (saves credits, avoids hallucination)
-    - Some research but confidence below LOW_CONFIDENCE_THRESHOLD -> write report, but force strict
-      grounding to retrieved data only, and flag the limitation in the output
-    - Confidence at/above threshold -> normal report generation
-    """
+    """Async reporter node with strict template, fact verification, and deterministic citation mapping."""
     loop = asyncio.get_running_loop()
-    logger.info("Writing final report")
+    logger.info("Writing final research report with strict template")
 
-    plan_text = "\n".join(state.get("plan", []))
-    research_list = state.get("research_results", [])
+    plan_text = "\n".join(f"- {p}" for p in state.get("plan", []))
+    raw_chunks = state.get("retrieved_chunks", [])
     docs_list = state.get("retrieved_docs", [])
-    # Aggressive truncation to stay under token limits and prevent hallucination from context overflow
-    research_text = "\n".join(research_list)[:RESEARCH_CHAR_CAP]
-    docs_text = "\n".join(docs_list)[:DOCS_CHAR_CAP]
-    tone = state.get("tone", "super friendly and conversational")
-    confidence = state.get("confidence_score", 0)
+    tone = state.get("tone", "professional and informative")
 
-    has_research = bool(research_list) or bool(docs_list)
-
-    if not has_research:
-        logger.warning(
-            f"No research data at all (confidence={confidence}) — returning honest limited response")
-        state["final_report"] = _no_research_fallback(
-            state["query"], plan_text, confidence)
+    if not docs_list and not raw_chunks:
+        logger.warning("No research documents available for report writing")
+        state["final_report"] = f"# Research Report: {state['query']}\n\n> ⚠️ **No verified research findings available** for this query.\n"
         metrics.end_agent("reporter", error="no_research_data")
         return state
 
-    if confidence < LOW_CONFIDENCE_THRESHOLD:
-        logger.warning(
-            f"Low confidence research (confidence={confidence}) — writing report with strict grounding")
+    # ── Deduplicate & rank: collapse same-URL chunks, keep top 7-9 sources ──
+    chunks = _select_top_sources(raw_chunks, max_n=MAX_SOURCES)
+    if not chunks:
+        # Fallback if chunk metadata is incomplete — use raw list, capped
+        chunks = raw_chunks[:MAX_SOURCES]
+        for i, ch in enumerate(chunks, start=1):
+            ch = dict(ch)
+            ch["id"] = i
 
-    prompt = _build_prompt(
-        tone, state["query"], plan_text, research_text, docs_text, confidence)
+    # Build numbered evidence text for the LLM from deduplicated sources only
+    def _fmt_chunk(ch: Dict[str, Any]) -> str:
+        return (
+            f"[{ch['id']}] Title: {ch.get('title','')}\n"
+            f"URL: {ch.get('url','')}\n"
+            f"Date: {ch.get('date','Recent')}\n"
+            f"Text: {ch.get('text','')[:800]}"
+        )
 
+    docs_text = "\n\n".join(_fmt_chunk(ch) for ch in chunks)
+
+    prompt = REPORTER_STRICT_PROMPT.format(
+        tone=tone,
+        query=state["query"],
+        plan=plan_text,
+        retrieved_docs=docs_text
+    )
+
+    print(
+        f"[DEBUG REPORTER] Invoking Reporter LLM ({GROQ_REPORTER_MODEL})...", flush=True)
     try:
         response = await asyncio.wait_for(
             loop.run_in_executor(None, invoke_with_retry, llm, prompt),
             timeout=AGENT_TIMEOUT
         )
-        state["final_report"] = response.content.strip()
-        logger.info("Report generated successfully")
+        raw_report = response.content.strip()
+        print(
+            f"[DEBUG REPORTER] Reporter LLM generated {len(raw_report.split())} words.", flush=True)
 
-        input_tokens = len(prompt)
-        output_tokens = len(response.content)
-        metrics.end_agent("reporter", input_tokens=input_tokens,
-                          output_tokens=output_tokens)
+        # Deterministic citation and number validation pass
+        validated_report = _validate_citations_and_numbers(raw_report, chunks)
 
+        state["final_report"] = validated_report
+        logger.info(
+            f"Report generated and validated successfully ({len(validated_report.split())} words)")
+
+        metrics.end_agent(
+            "reporter",
+            input_tokens=len(prompt),
+            output_tokens=len(validated_report)
+        )
     except asyncio.TimeoutError:
-        logger.error(f"Reporter timeout after {AGENT_TIMEOUT}s")
-        state["final_report"] = _timeout_fallback(
-            state["query"], plan_text, research_text)
+        logger.error(f"Reporter timed out after {AGENT_TIMEOUT}s")
+        sources_sec = _build_deterministic_sources_section(chunks)
+        state["final_report"] = f"# Research Report: {state['query']}\n\n> ⚠️ Report generation timed out.\n\n{sources_sec}"
         metrics.end_agent("reporter", error="timeout")
-
     except Exception as e:
-        logger.error(f"LLM call failed after retries: {e}")
-        state["final_report"] = _error_fallback(
-            state["query"], plan_text, research_text, e)
+        logger.error(f"Reporter failed: {e}")
+        sources_sec = _build_deterministic_sources_section(chunks)
+        state["final_report"] = f"# Research Report: {state['query']}\n\n> ⚠️ Report writer encountered an error: {e}\n\n{sources_sec}"
         metrics.end_agent("reporter", error=str(e))
 
     return state
 
 
-async def reporter_node_streaming(
-    state: ResearchState,
-    chunk_callback: Callable
-) -> ResearchState:
-    """Streaming variant of reporter_node.
+async def reporter_node_streaming(state: ResearchState, chunk_callback: Callable) -> ResearchState:
+    """Streaming variant that streams generated tokens and validates final output."""
+    loop = asyncio.get_running_loop()
+    logger.info("Streaming final report with strict template")
 
-    Streams LLM tokens via chunk_callback as they are generated, then
-    stores the completed report in state["final_report"].
+    plan_text = "\n".join(f"- {p}" for p in state.get("plan", []))
+    raw_chunks = state.get("retrieved_chunks", [])
+    tone = state.get("tone", "professional and informative")
 
-    Args:
-        state: The current ResearchState.
-        chunk_callback: An async callable that receives each text chunk string.
-    """
-    logger.info("Writing final report (streaming mode)")
+    # Deduplicate & rank sources — same logic as reporter_node
+    chunks = _select_top_sources(raw_chunks, max_n=MAX_SOURCES)
+    if not chunks:
+        chunks = raw_chunks[:MAX_SOURCES]
 
-    plan_text = "\n".join(state.get("plan", []))
-    research_list = state.get("research_results", [])
-    docs_list = state.get("retrieved_docs", [])
-    research_text = "\n".join(research_list)[:RESEARCH_CHAR_CAP]
-    docs_text = "\n".join(docs_list)[:DOCS_CHAR_CAP]
-    tone = state.get("tone", "super friendly and conversational")
-    confidence = state.get("confidence_score", 0)
-    has_research = bool(research_list) or bool(docs_list)
+    def _fmt_chunk(ch: Dict[str, Any]) -> str:
+        return (
+            f"[{ch['id']}] Title: {ch.get('title','')}\n"
+            f"URL: {ch.get('url','')}\n"
+            f"Date: {ch.get('date','Recent')}\n"
+            f"Text: {ch.get('text','')[:800]}"
+        )
 
-    if not has_research:
-        logger.warning(
-            f"No research data at all (confidence={confidence}) — using honest fallback")
-        fallback = _no_research_fallback(state["query"], plan_text, confidence)
-        state["final_report"] = fallback
-        # Stream fallback as a single chunk so UI updates
-        await chunk_callback(fallback)
-        metrics.end_agent("reporter", error="no_research_data")
-        return state
+    docs_text = "\n\n".join(_fmt_chunk(ch) for ch in chunks)
 
-    if confidence < LOW_CONFIDENCE_THRESHOLD:
-        logger.warning(
-            f"Low confidence research (confidence={confidence}) — strict grounding mode")
+    prompt = REPORTER_STRICT_PROMPT.format(
+        tone=tone,
+        query=state["query"],
+        plan=plan_text,
+        retrieved_docs=docs_text
+    )
 
-    prompt = _build_prompt(
-        tone, state["query"], plan_text, research_text, docs_text, confidence)
-
-    full_report = ""
-
+    full_response = []
     try:
         async for chunk in llm.astream(prompt):
-            text = chunk.content
-            if text:
-                full_report += text
-                await chunk_callback(text)
+            content = chunk.content
+            if content:
+                full_response.append(content)
+                if asyncio.iscoroutinefunction(chunk_callback):
+                    await chunk_callback(content)
+                else:
+                    chunk_callback(content)
 
-        state["final_report"] = full_report.strip()
-        logger.info(f"Streaming report complete — {len(full_report)} chars")
-        metrics.end_agent("reporter", input_tokens=len(prompt), output_tokens=len(full_report))
-
+        raw_report = "".join(full_response).strip()
+        state["final_report"] = _validate_citations_and_numbers(
+            raw_report, chunks)
     except Exception as e:
-        err_type = type(e).__name__
-        logger.error(f"Streaming LLM failed ({err_type}): {e}")
-        # If we got partial output, use it; otherwise serve error fallback
-        if full_report.strip():
-            logger.warning("Using partial streaming output as report")
-            state["final_report"] = full_report.strip()
-        else:
-            fallback = _error_fallback(state["query"], plan_text, research_text, e)
-            state["final_report"] = fallback
-            await chunk_callback(fallback)
-        metrics.end_agent("reporter", error=str(e))
+        logger.error(f"Streaming error: {e}")
+        state = await reporter_node(state)
 
     return state
-
-
-if __name__ == "__main__":
-    test_state: ResearchState = {
-        "query": "What are the latest advancements in quantum computing?",
-        "plan": ["Search recent breakthroughs", "Find key companies", "Identify challenges"],
-        "research_results": ["IBM announced a 1000-qubit chip in 2023.", "Quantum error correction remains a major hurdle."],
-        "retrieved_docs": ["IBM's Condor processor has 1,121 qubits."],
-        "critique": "Good coverage of major players.",
-        "confidence_score": 0.85,
-        "iteration_count": 1,
-        "final_report": "",
-    }
-    result = asyncio.run(reporter_node(test_state))
-    print(result["final_report"])

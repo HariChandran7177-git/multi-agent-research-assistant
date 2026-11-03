@@ -5,6 +5,7 @@ python-dotenv
 langchain
 langchain-core
 langchain-groq
+langchain-google-genai
 langchain-openai
 langgraph
 langgraph-checkpoint-sqlite

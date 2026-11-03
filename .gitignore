@@ -46,3 +46,6 @@ desktop.ini
 *.sqlite-shm
 *.sqlite-wal
 *.log
+data/
+model_cache/
+scratch/

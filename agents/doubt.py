@@ -1,28 +1,30 @@
 import asyncio
 from langchain_groq import ChatGroq
-from core.config import GROQ_REPORTER_MODEL, GROQ_API_KEY, AGENT_TIMEOUT
+from core.config import GROQ_RESEARCHER_MODEL, GROQ_API_KEY, AGENT_TIMEOUT
 from core.logger import get_logger
 from core.metrics import metrics
 
 logger = get_logger(__name__)
 
-llm = ChatGroq(model=GROQ_REPORTER_MODEL, api_key=GROQ_API_KEY, temperature=0.1)
+llm = ChatGroq(model=GROQ_RESEARCHER_MODEL, api_key=GROQ_API_KEY, temperature=0.1)
 
 
 async def answer_doubt(report_text: str, question: str) -> str:
-    """Async doubt answering with timeout and metrics."""
-    loop = asyncio.get_event_loop()
-    prompt = f"""You are a helpful assistant. You are given a research report and a question.
-Your task is to answer the question.
-First, check if the answer is present in the provided report text.
-If the answer is in the report, start your response with "According to the report..." or a similar preface, and then provide the answer based on the report.
-If the report does NOT cover the question, state that the report doesn't cover this, BUT then go ahead and answer the question using your general knowledge.
+    """Async doubt answering that provides concise answers ('small matter') and prompts for next step."""
+    loop = asyncio.get_running_loop()
+    prompt = f"""You are a concise, sharp research assistant answering a user's question about a report.
 
-Report:
-{report_text[:15000]}  # Truncate to stay under token limits
+CRITICAL INSTRUCTIONS:
+1. KEEP IT SHORT ("SMALL MATTER"): Give a maximum of 2-3 concise bullet points or 2 short sentences. Do NOT write long paragraphs or essays, even if the question is complex.
+2. Directly answer the question based on the report text. If the report doesn't cover it, state that in one sentence and give a brief fact.
+3. ALWAYS end your response with a short question asking the user for their next step (e.g. "What would you like to explore next?", "Would you like me to dig deeper into [related topic] or export this summary?").
+
+Report Context:
+{report_text[:12000]}
 
 Question: {question}
-"""
+
+Answer (concise + ask for next step):"""
     try:
         # Timeout protection
         response = await asyncio.wait_for(
@@ -35,8 +37,8 @@ Question: {question}
     except asyncio.TimeoutError:
         logger.error(f"Doubt answering timed out after {AGENT_TIMEOUT}s")
         metrics.end_agent("doubt", error="timeout")
-        return "Sorry, I timed out while analyzing your question. Please try again."
+        return "Sorry, I timed out while analyzing your question. Would you like me to try again or ask a different question?"
     except Exception as e:
         logger.error(f"Error in answer_doubt: {e}")
         metrics.end_agent("doubt", error=str(e))
-        return f"Error analyzing doubt: {e}"
+        return f"Error analyzing doubt: {e}. Would you like to try asking in a different way?"

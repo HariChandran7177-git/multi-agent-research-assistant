@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NeuralDesk — Mission Control</title>
+<title>Multi-Agent AI — Research Assistant</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <!-- Resolve assets regardless of whether served from /static/ or / -->
 <script>
   (function() {
@@ -17,144 +18,143 @@
     document.head.appendChild(base);
   })();
 </script>
-<link rel="stylesheet" href="style.css?v=6" />
+<link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 
-<nav>
-  <div class="wrap">
-    <div class="brand"><span class="brand-dot"></span>NeuralDesk</div>
-    <div class="nav-links">
-      <a href="#pipeline-section">Pipeline</a>
-      <a href="#confidence-section">Confidence</a>
-      <a href="#archive-section">Archive</a>
-      <a href="https://github.com/HariChandran7177/multi-agent-research-assistant" target="_blank">Docs</a>
-    </div>
-  </div>
-</nav>
-
-<header class="hero">
-  <div class="wrap">
-    <div class="eyebrow"><span class="brand-dot" style="width:6px;height:6px;"></span> 6 agents online</div>
-    <h1 class="headline">Watch six agents <em>research, argue,<br>and correct each other</em> — live.</h1>
-    <p class="sub">Ask a question. Route, plan, research, retrieve, critique, and report — every step visible as it happens, not hidden behind a spinner.</p>
-    <div class="query-bar">
-      <input type="text" placeholder="e.g. Compare RAG vs fine-tuning for a support chatbot" id="queryInput">
-      <button id="run-btn" onclick="startRealPipeline()">Research</button>
-    </div>
-    <div class="quick-examples">
-      <span onclick="fillQuery(this)">Latest developments in agentic AI</span>
-      <span onclick="fillQuery(this)">Qdrant vs Pinecone for production</span>
-      <span onclick="fillQuery(this)">Explain LangGraph checkpointing</span>
-    </div>
-  </div>
-</header>
-
-<section class="section" id="pipeline-section">
-  <div class="wrap">
-    <div class="section-head">
-      <div class="section-label">// MISSION CONTROL</div>
-      <div class="section-title">The pipeline, in the open</div>
-      <div class="section-desc">Every agent's status streams in over SSE. Click a node to see exactly what it found, decided, or flagged — including when the Critic sends work back for another pass.</div>
-    </div>
-
-    <div class="pipeline-shell">
-      <div class="pipeline-toolbar">
-        <div class="status-pill"><span class="ring" id="status-ring"></span> <span id="run-status">IDLE — WAITING FOR QUERY</span></div>
-        <button class="replay-btn" id="resume-btn" onclick="resumePipeline()" style="display:none; border-color:var(--amber); color:var(--amber);">Confirm Report Generation</button>
+<div class="chat-app">
+  <!-- LEFT SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="brand">
+        <div class="brand-icon">✦</div>
+        <span class="brand-name">Multi-Agent AI</span>
       </div>
-
-      <div class="pipeline" id="pipeline"></div>
-
-      <div class="drawer" id="drawer">
-        <div class="drawer-head">
-          <div class="drawer-title" id="drawerTitle">—</div>
-          <div class="drawer-tech" id="drawerTech">—</div>
-        </div>
-        <div class="drawer-body" id="drawerBody">—</div>
-        <div class="drawer-log" id="drawerLog">—</div>
-      </div>
-      
-      <div id="hitl-review-section" class="hitl-review-container" style="display:none; margin-top:32px; padding:24px; background: rgba(19, 26, 35, 0.8); border: 1px solid var(--line); border-radius: 12px;">
-        <div style="font-family: var(--mono); font-size: 13px; color: var(--teal); margin-bottom: 16px;">// INTERMEDIATE REVIEW WAITING</div>
-        <div id="hitl-review-content" class="report-container" style="padding: 24px; box-shadow: none;"></div>
-      </div>
+      <button class="icon-btn sidebar-toggle-btn" id="sidebarCloseBtn" title="Close sidebar" onclick="toggleSidebar()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
     </div>
-  </div>
-</section>
 
-<section class="section" id="confidence-section">
-  <div class="wrap">
-    <div class="section-head">
-      <div class="section-label">// SELF-CORRECTION</div>
-      <div class="section-title">Confidence, not a black box</div>
-      <div class="section-desc">The Critic scores every draft — 7% model judgment, 93% objective signal — and loops back to Research when it's not convinced. You see the whole climb, not just the final number.</div>
+    <button class="new-chat-btn" onclick="startNewChat()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      <span>New Research</span>
+    </button>
+
+    <div class="history-label">Recent Research</div>
+    <div class="history-list" id="historyList">
+      <div class="history-loading">Loading past runs...</div>
     </div>
-    <div class="confidence-row">
-      <div class="gauge-block">
-        <svg width="90" height="90" viewBox="0 0 90 90">
-          <circle cx="45" cy="45" r="38" fill="none" stroke="#1F2833" stroke-width="8"/>
-          <circle cx="45" cy="45" r="38" fill="none" stroke="#5EEAD4" stroke-width="8" stroke-linecap="round"
-            stroke-dasharray="238.7" stroke-dashoffset="238.7" transform="rotate(-90 45 45)" id="conf-svg"/>
-        </svg>
-        <div class="gauge-num">
-          <div class="big" id="conf-val">0.00</div>
-          <div style="color:var(--muted)">confidence</div>
-        </div>
+
+    <div class="sidebar-footer">
+      <div class="agents-status-pill">
+        <span class="status-dot"></span>
+        <span>6 Agents Active</span>
       </div>
-      <div class="gauge-block">
-        <div style="flex:1">
-          <div style="font-family:var(--mono); font-size:11.5px; color:var(--muted); margin-bottom:14px;">RETRY TIMELINE</div>
-          <div class="trend" id="trend-bars">
-            <div style="color:var(--muted-2); font-size:12px; height:100%; display:flex; align-items:center;">Waiting for critic loops...</div>
+      <div class="api-health" id="apiHealthBadge">● Ready</div>
+    </div>
+  </aside>
+
+  <!-- SIDEBAR OVERLAY FOR MOBILE -->
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar(false)"></div>
+
+  <!-- MAIN CHAT AREA -->
+  <main class="chat-main">
+    <!-- TOP NAVIGATION BAR -->
+    <header class="chat-topbar">
+      <div class="topbar-left">
+        <button class="icon-btn" id="sidebarOpenBtn" title="Open sidebar" onclick="toggleSidebar(true)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+        </button>
+        <span class="topbar-title" id="chatTitle">Multi-Agent AI</span>
+        <span class="topbar-badge">v2.0 · Live Web Research</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="topbar-btn" onclick="startNewChat()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>New Chat</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- MESSAGES SCROLL CONTAINER -->
+    <div class="chat-scroll-container" id="chatScrollContainer">
+      <!-- WELCOME STATE (shown when no messages exist) -->
+      <div class="welcome-container" id="welcomeContainer">
+        <div class="welcome-icon">✦</div>
+        <h1 class="welcome-title">What would you like to research?</h1>
+        <p class="welcome-subtitle">Ask any question. Six coordinated AI agents will route, plan, gather web evidence, critique facts, and synthesize an impeccably cited report.</p>
+
+        <div class="suggestions-grid">
+          <div class="suggestion-card" onclick="selectSuggestion('What are the biggest breakthroughs in quantum computing in 2025-2026?')">
+            <div class="suggestion-icon">⚡</div>
+            <div class="suggestion-text">
+              <strong>Quantum Computing</strong>
+              <span>Breakthroughs and real-world applications in 2025-2026</span>
+            </div>
+          </div>
+          <div class="suggestion-card" onclick="selectSuggestion('Compare PostgreSQL pgvector vs Qdrant for production vector search in 2026')">
+            <div class="suggestion-icon">🔍</div>
+            <div class="suggestion-text">
+              <strong>pgvector vs Qdrant</strong>
+              <span>Production vector search comparison and benchmarks</span>
+            </div>
+          </div>
+          <div class="suggestion-card" onclick="selectSuggestion('How does CRISPR gene editing work and what are its clinical uses in 2026?')">
+            <div class="suggestion-icon">🧬</div>
+            <div class="suggestion-text">
+              <strong>CRISPR Gene Editing</strong>
+              <span>Core mechanisms and active 2026 therapeutic trials</span>
+            </div>
+          </div>
+          <div class="suggestion-card" onclick="selectSuggestion('What is the current state of the global semiconductor market in 2026?')">
+            <div class="suggestion-icon">📈</div>
+            <div class="suggestion-text">
+              <strong>Global Semiconductors</strong>
+              <span>2026 market size, revenue projections, and AI chip drivers</span>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  </div>
-</section>
 
-<!-- REPORT VIEWER SECTION -->
-<section class="section" id="report-viewer-section" style="display:none;">
-  <div class="wrap">
-    <div class="section-head">
-      <div class="section-label">// OUTPUT</div>
-      <div class="section-title">Final Report</div>
-      <div class="section-desc">Markdown rendered in real-time as the Reporter streams output.</div>
+      <!-- CONVERSATION THREAD CONTAINER -->
+      <div class="messages-thread" id="messagesThread" style="display:none;"></div>
     </div>
-    <div id="report-body" class="report-container">
-       <p style="color:var(--muted);font-style:italic;">Writing report<span class="stream-cursor"></span></p>
-    </div>
-    <div id="doubt-section" style="display:none; margin-top: 32px;">
-      <div class="query-bar" style="max-width:100%; border: 1px solid var(--line-soft); background: var(--panel);">
-        <input type="text" id="doubtInput" placeholder="Ask a follow-up question about this report...">
-        <button id="doubt-btn" onclick="askDoubt()">Ask</button>
+
+    <!-- HUMAN IN THE LOOP APPROVAL BANNER (if enabled) -->
+    <div class="hitl-banner" id="hitlBanner" style="display:none;">
+      <div class="hitl-banner-content">
+        <span class="hitl-icon">⏸️</span>
+        <div class="hitl-text">
+          <strong>Review Required:</strong> Intermediate research plan & evidence gathered.
+        </div>
+        <button class="hitl-btn" onclick="resumePipeline()">Approve & Generate Report</button>
       </div>
-      <div id="doubt-response" class="drawer-log" style="display:none; margin-top: 16px;"></div>
     </div>
-  </div>
-</section>
 
-<section class="section" id="archive-section">
-  <div class="wrap">
-    <div class="section-head">
-      <div class="section-label">// ARCHIVE</div>
-      <div class="section-title">Past runs</div>
-      <div class="section-desc">Every research run, kept — searchable by topic, sortable by confidence.</div>
+    <!-- CHAT INPUT AREA (BOTTOM FIXED) -->
+    <div class="chat-input-container">
+      <div class="chat-input-card">
+        <textarea
+          id="chatInput"
+          placeholder="Ask anything to research or follow up on findings..."
+          rows="1"
+          oninput="autoResizeTextarea(this)"
+          onkeydown="handleInputKeydown(event)"
+        ></textarea>
+        <button id="sendBtn" class="send-btn" title="Send message" onclick="submitMessage()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+      <div class="chat-disclaimer">
+        Multi-Agent AI verifies multiple live web sources with strict anti-hallucination checks.
+      </div>
     </div>
-    <div class="archive-controls">
-      <div class="chip active">All</div>
-      <div class="chip">High confidence</div>
-    </div>
-    <div class="archive-grid" id="archiveGrid"></div>
-  </div>
-</section>
+  </main>
+</div>
 
-<!-- TOAST -->
+<!-- TOAST NOTIFICATION -->
 <div id="toast" class="toast"></div>
 
-<footer>NeuralDesk — Mission Control</footer>
-
-<script src="app.js?v=6"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

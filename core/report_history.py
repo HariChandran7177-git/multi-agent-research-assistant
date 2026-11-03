@@ -12,7 +12,8 @@ from core.logger import get_logger
 
 logger = get_logger(__name__)
 
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "report_history.sqlite"))
+from core.config import DATA_DIR
+DB_PATH = os.path.join(DATA_DIR, "report_history.sqlite")
 
 
 def _get_conn() -> sqlite3.Connection:

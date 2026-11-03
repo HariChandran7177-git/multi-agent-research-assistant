@@ -10,7 +10,8 @@ from core.logger import get_logger
 
 logger = get_logger(__name__)
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "cache.sqlite")
+from core.config import DATA_DIR
+DB_PATH = os.path.join(DATA_DIR, "cache.sqlite")
 
 
 def _get_conn():

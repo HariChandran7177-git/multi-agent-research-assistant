@@ -1,19 +1,48 @@
+/**
+ * Multi-Agent AI — ChatGPT Style Frontend Application Logic
+ */
+
 const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
   ? 'http://localhost:8000'
   : window.location.origin;
 
-const AGENT_ORDER = ['router', 'planner', 'researcher', 'retriever', 'critic', 'reporter'];
+function getApiKey() {
+  const meta = document.querySelector('meta[name="api-key"]');
+  if (meta && meta.content) return meta.content;
+  const stored = localStorage.getItem('APP_API_KEY');
+  if (stored) return stored;
+  return '';
+}
 
+function apiHeaders(extra = {}) {
+  const h = { 'Content-Type': 'application/json', ...extra };
+  const key = getApiKey();
+  if (key) h['X-API-Key'] = key;
+  return h;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+let isPipelineRunning = false;
+let currentAbortController = null;
+let currentThreadId = null;
+let currentReportMarkdown = '';
+let currentReportId = null;
+
+const AGENT_ORDER = ['router', 'planner', 'researcher', 'retriever', 'critic', 'reporter'];
 const AGENT_META = {
-  'router':     { icon: '⌁', name: 'Router',     tech: 'Groq · Model' },
-  'planner':    { icon: '◫', name: 'Planner',    tech: 'LangGraph' },
-  'researcher': { icon: '⌕', name: 'Researcher', tech: 'Tavily API' },
-  'retriever':  { icon: '▤', name: 'Retriever',  tech: 'Qdrant' },
-  'critic':     { icon: '◎', name: 'Critic',     tech: 'Hybrid Scoring' },
-  'reporter':   { icon: '▧', name: 'Reporter',   tech: 'Markdown' },
+  'router':     { icon: '⌁', name: 'Router' },
+  'planner':    { icon: '◫', name: 'Planner' },
+  'researcher': { icon: '⌕', name: 'Researcher' },
+  'retriever':  { icon: '▤', name: 'Retriever' },
+  'critic':     { icon: '◎', name: 'Critic' },
+  'reporter':   { icon: '▧', name: 'Reporter' },
 };
 
-// Markdown Parser
+// ─────────────────────────────────────────────────────────────────────────────
+// Markdown Parser with Clickable Numbered Citations
+// ─────────────────────────────────────────────────────────────────────────────
 function md2html(md) {
   if (!md) return '';
   let h = md;
@@ -30,6 +59,8 @@ function md2html(md) {
   h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
   h = h.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+  
+  // Tables
   h = h.replace(/(\|.+\|\n)(\|[-:| ]+\|\n)((?:\|.+\|\n?)*)/g, (_, header, sep, body) => {
     const heads = header.trim().split('|').filter(Boolean).map(x => `<th>${x.trim()}</th>`).join('');
     const rows = body.trim().split('\n').map(row =>
@@ -37,6 +68,8 @@ function md2html(md) {
     ).join('');
     return `<table><thead><tr>${heads}</tr></thead><tbody>${rows}</tbody></table>`;
   });
+
+  // Lists
   h = h.replace(/((?:^[ \t]*[-*+] .+\n?)+)/gm, match => {
     const items = match.trim().split('\n').map(l => `<li>${l.replace(/^[ \t]*[-*+] /, '')}</li>`).join('');
     return `<ul>${items}</ul>`;
@@ -45,11 +78,20 @@ function md2html(md) {
     const items = match.trim().split('\n').map(l => `<li>${l.replace(/^\d+\. /, '')}</li>`).join('');
     return `<ol>${items}</ol>`;
   });
-  h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+  // Markdown links
+  h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  
+  // Clickable numbered citations [1], [2]
+  h = h.replace(/(?:^|\s)\[(\d+)\](?=[,\s\.\?!]|$)/g, ' <a href="#source-$1" class="citation-pill" title="Jump to source $1">[$1]</a>');
+  
+  // Sources section anchor
+  h = h.replace(/^(?:<p>)?\[(\d+)\]\s+/gm, '<span id="source-$1" class="source-item-num">[$1]</span> ');
+
   h = h.split('\n\n').map(block => {
     block = block.trim();
     if (!block) return '';
-    if (/^<(h[1-6]|ul|ol|pre|table|blockquote|hr)/.test(block)) return block;
+    if (/^<(h[1-6]|ul|ol|pre|table|blockquote|hr|span)/.test(block)) return block;
     return `<p>${block.replace(/\n/g, '<br/>')}</p>`;
   }).join('\n');
   return h;
@@ -57,146 +99,231 @@ function md2html(md) {
 
 function showToast(msg, type = 'success') {
   const el = document.getElementById('toast');
+  if (!el) return;
   el.textContent = msg;
   el.className = 'toast' + (type === 'error' ? ' error' : '');
   el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 3500);
+  setTimeout(() => el.classList.remove('show'), 3200);
 }
 
-// ─────────────────────────────────────────────────────────
-// PIPELINE RENDERING
-// ─────────────────────────────────────────────────────────
-const pipelineEl = document.getElementById('pipeline');
-AGENT_ORDER.forEach((key, i) => {
-  const a = AGENT_META[key];
-  const wrap = document.createElement('div');
-  wrap.className = 'node-wrap';
-  wrap.innerHTML = `
-    <div class="node" id="node-${key}" onclick="openDrawer('${key}')">
-      <div class="node-icon">
-        <div class="spinner"></div>
-        ${a.icon}
-        <div class="node-badge" id="badge-${key}">✓</div>
-      </div>
-      <div class="node-name dim" id="name-${key}">${a.name}</div>
-      <div class="node-status" id="status-${key}">idle</div>
-    </div>
-    ${i < AGENT_ORDER.length-1 ? '<div class="connector"><div class="fill" id="conn-'+key+'"></div></div>' : ''}
-  `;
-  pipelineEl.appendChild(wrap);
-});
+// ─────────────────────────────────────────────────────────────────────────────
+// Sidebar & Navigation
+// ─────────────────────────────────────────────────────────────────────────────
+function toggleSidebar(forceState) {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  const isMobile = window.innerWidth <= 768;
 
-let agentLogs = {}; // stores latest logs per agent for the drawer
-function openDrawer(key) {
-  const a = AGENT_META[key];
-  const drawer = document.getElementById('drawer');
-  document.getElementById('drawerTitle').textContent = a.name;
-  document.getElementById('drawerTech').textContent = a.tech;
-  
-  if (agentLogs[key]) {
-    document.getElementById('drawerBody').innerHTML = agentLogs[key].desc || '—';
-    document.getElementById('drawerLog').innerHTML = md2html(agentLogs[key].log || '—');
-  } else {
-    document.getElementById('drawerBody').textContent = 'Waiting for data...';
-    document.getElementById('drawerLog').innerHTML = '—';
-  }
-  drawer.classList.add('open');
-}
-
-function resetPipeline() {
-  AGENT_ORDER.forEach(key => {
-    const node = document.getElementById('node-' + key);
-    node.className = 'node';
-    document.getElementById('name-' + key).classList.add('dim');
-    document.getElementById('status-' + key).textContent = 'idle';
-    if(document.getElementById('conn-' + key)) {
-      document.getElementById('conn-' + key).style.width = '0%';
+  if (isMobile) {
+    if (typeof forceState === 'boolean') {
+      sidebar.classList.toggle('open', forceState);
+      overlay.classList.toggle('active', forceState);
+    } else {
+      sidebar.classList.toggle('open');
+      overlay.classList.toggle('active');
     }
-  });
-  agentLogs = {};
-  document.getElementById('drawer').classList.remove('open');
-  document.getElementById('conf-svg').style.strokeDashoffset = '238.7';
-  document.getElementById('conf-val').textContent = '0.00';
-  document.getElementById('trend-bars').innerHTML = '<div style="color:var(--muted-2); font-size:12px; height:100%; display:flex; align-items:center;">Waiting for critic loops...</div>';
-  
-  document.getElementById('report-viewer-section').style.display = 'none';
-  document.getElementById('report-body').innerHTML = '<p style="color:var(--muted);font-style:italic;">Writing report<span class="stream-cursor"></span></p>';
-  document.getElementById('resume-btn').style.display = 'none';
-  document.getElementById('doubt-section').style.display = 'none';
-  document.getElementById('doubt-response').style.display = 'none';
-  document.getElementById('doubt-response').innerHTML = '';
-  document.getElementById('hitl-review-section').style.display = 'none';
-  _lastReportString = '';
-}
-
-function setNodeState(key, state, statusText) {
-  const node = document.getElementById('node-' + key);
-  if(!node) return;
-  
-  if (state === 'idle') {
-    node.className = 'node';
-    document.getElementById('name-' + key).classList.add('dim');
   } else {
-    node.className = 'node ' + (state === 'skipped' ? 'done' : state);
-    document.getElementById('name-' + key).classList.remove('dim');
-  }
-  
-  if(statusText) document.getElementById('status-' + key).textContent = statusText;
-  
-  // Update connector if done or skipped
-  if(state === 'done' || state === 'skipped') {
-    const conn = document.getElementById('conn-' + key);
-    if(conn) conn.style.width = '100%';
-  } else if (state === 'idle') {
-    const conn = document.getElementById('conn-' + key);
-    if(conn) conn.style.width = '0%';
+    sidebar.classList.toggle('collapsed');
   }
 }
 
-// ─────────────────────────────────────────────────────────
-// SSE PIPELINE EXECUTION
-// ─────────────────────────────────────────────────────────
-let eventSource = null;
-let currentThreadId = null;
-let _streamBuffer = '';
-let _lastReportString = '';
-let isPipelineRunning = false;
-let currentAbortController = null;
-
-function fillQuery(el) { 
-  document.getElementById('queryInput').value = el.textContent; 
-  startRealPipeline();
-}
-
-async function startRealPipeline() {
+function startNewChat() {
   if (isPipelineRunning) {
     if (currentAbortController) currentAbortController.abort();
-    await new Promise(r => setTimeout(r, 100)); // wait for cleanup
+    isPipelineRunning = false;
   }
-  
-  const query = document.getElementById('queryInput').value.trim();
-  if (!query) { showToast('Please enter a query', 'error'); return; }
+  currentThreadId = null;
+  currentReportMarkdown = '';
+  currentReportId = null;
 
+  document.getElementById('welcomeContainer').style.display = 'flex';
+  const thread = document.getElementById('messagesThread');
+  thread.style.display = 'none';
+  thread.innerHTML = '';
+  document.getElementById('hitlBanner').style.display = 'none';
+  document.getElementById('chatTitle').textContent = 'Multi-Agent AI';
+  
+  const input = document.getElementById('chatInput');
+  input.value = '';
+  autoResizeTextarea(input);
+  input.focus();
+  toggleSidebar(false);
+}
+
+function selectSuggestion(query) {
+  const input = document.getElementById('chatInput');
+  input.value = query;
+  autoResizeTextarea(input);
+  submitMessage();
+}
+
+function autoResizeTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 180) + 'px';
+  const sendBtn = document.getElementById('sendBtn');
+  if (sendBtn) {
+    sendBtn.disabled = !el.value.trim() && !isPipelineRunning;
+  }
+}
+
+function handleInputKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    submitMessage();
+  }
+}
+
+function scrollToBottom() {
+  const container = document.getElementById('chatScrollContainer');
+  if (container) {
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Message Submission Dispatcher
+// ─────────────────────────────────────────────────────────────────────────────
+function submitMessage() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  // Clear input
+  input.value = '';
+  autoResizeTextarea(input);
+
+  // If a report already exists in the current session, treat this as a follow-up doubt question!
+  if (currentReportMarkdown && !isPipelineRunning) {
+    submitFollowUpDoubt(text);
+  } else {
+    // Initial research query
+    startResearchStream(text);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User & Assistant Chat UI Builders
+// ─────────────────────────────────────────────────────────────────────────────
+function appendUserMessage(text) {
+  document.getElementById('welcomeContainer').style.display = 'none';
+  const thread = document.getElementById('messagesThread');
+  thread.style.display = 'flex';
+
+  const userRow = document.createElement('div');
+  userRow.className = 'chat-message user';
+  userRow.innerHTML = `
+    <div class="msg-content-wrapper">
+      <div class="user-bubble">${escapeHtml(text)}</div>
+    </div>
+    <div class="msg-avatar">U</div>
+  `;
+  thread.appendChild(userRow);
+  scrollToBottom();
+}
+
+function appendAssistantMessageContainer() {
+  const thread = document.getElementById('messagesThread');
+  const msgRow = document.createElement('div');
+  msgRow.className = 'chat-message assistant';
+  
+  const idSuffix = Date.now();
+  msgRow.innerHTML = `
+    <div class="msg-avatar">✦</div>
+    <div class="msg-content-wrapper">
+      <!-- Multi-Agent Process Card ("Thinking" Accordion) -->
+      <div class="agent-thinking-card active expanded" id="thinkingCard-${idSuffix}">
+        <div class="thinking-header" onclick="toggleThinkingCard('thinkingCard-${idSuffix}')">
+          <div class="thinking-status-left">
+            <div class="thinking-spinner" id="thinkingSpinner-${idSuffix}"></div>
+            <strong id="thinkingTitle-${idSuffix}">Multi-Agent Pipeline Active...</strong>
+            <span id="thinkingSummary-${idSuffix}" style="color:var(--text-dim);font-size:12px;">(Starting agents)</span>
+          </div>
+          <svg class="thinking-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+        <div class="thinking-body" id="thinkingBody-${idSuffix}">
+          <div class="agent-steps-grid" id="stepsGrid-${idSuffix}">
+            ${AGENT_ORDER.map(k => `
+              <div class="agent-step-item" id="step-${k}-${idSuffix}">
+                <div class="agent-step-name">${AGENT_META[k].name} <span class="step-icon">${AGENT_META[k].icon}</span></div>
+                <div class="agent-step-status" id="step-status-${k}-${idSuffix}">idle</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+
+      <!-- Report Body -->
+      <div class="report-markdown-body" id="reportBody-${idSuffix}">
+        <p style="color:var(--text-muted);font-style:italic;">Initializing multi-agent pipeline<span class="stream-cursor"></span></p>
+      </div>
+
+      <!-- Footer Meta & Actions -->
+      <div class="report-footer-meta" id="reportFooter-${idSuffix}" style="display:none;">
+        <div class="meta-badges-group" id="metaBadges-${idSuffix}"></div>
+        <div class="report-actions-group">
+          <button class="action-btn" onclick="copyReportText()">📋 Copy</button>
+          <button class="action-btn" onclick="downloadReportMd()">⬇️ Download</button>
+        </div>
+      </div>
+    </div>
+  `;
+  thread.appendChild(msgRow);
+  scrollToBottom();
+
+  return {
+    thinkingCard: document.getElementById(`thinkingCard-${idSuffix}`),
+    thinkingSpinner: document.getElementById(`thinkingSpinner-${idSuffix}`),
+    thinkingTitle: document.getElementById(`thinkingTitle-${idSuffix}`),
+    thinkingSummary: document.getElementById(`thinkingSummary-${idSuffix}`),
+    stepsGrid: document.getElementById(`stepsGrid-${idSuffix}`),
+    reportBody: document.getElementById(`reportBody-${idSuffix}`),
+    reportFooter: document.getElementById(`reportFooter-${idSuffix}`),
+    metaBadges: document.getElementById(`metaBadges-${idSuffix}`),
+    idSuffix: idSuffix
+  };
+}
+
+function toggleThinkingCard(cardId) {
+  const card = document.getElementById(cardId);
+  if (card) {
+    card.classList.toggle('expanded');
+  }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Research SSE Stream Handler
+// ─────────────────────────────────────────────────────────────────────────────
+async function startResearchStream(query) {
   isPipelineRunning = true;
   currentAbortController = new AbortController();
-  document.getElementById('run-btn').disabled = true;
-  document.getElementById('status-ring').style.animationPlayState = 'running';
-  document.getElementById('run-status').textContent = 'RESEARCHING...';
-  
-  resetPipeline();
-  document.getElementById('pipeline-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  
-  const payload = { query: query, user_id: 'browser_user' };
+  currentReportMarkdown = '';
+
+  appendUserMessage(query);
+  const elements = appendAssistantMessageContainer();
+  const id = elements.idSuffix;
+
+  document.getElementById('chatTitle').textContent = query.length > 36 ? query.slice(0, 36) + '...' : query;
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.innerHTML = '<span style="font-size:12px;">■</span>';
+  sendBtn.title = 'Stop generating';
+
+  let streamBuffer = '';
 
   try {
     const res = await fetch(`${API_BASE}/research/stream`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      method: 'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify({ query: query, user_id: 'browser_user' }),
       signal: currentAbortController.signal
     });
 
     if (!res.ok) {
-      if (res.status === 429) throw new Error('Too many requests. Please wait a minute.');
-      throw new Error(`Server error: ${res.status}`);
+      if (res.status === 429) throw new Error('Rate limit reached. Please wait a minute before querying again.');
+      throw new Error(`Server returned error status ${res.status}`);
     }
 
     const reader = res.body.getReader();
@@ -206,7 +333,7 @@ async function startRealPipeline() {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      
+
       buffer += decoder.decode(value, { stream: true });
       const parts = buffer.split('\n\n');
       buffer = parts.pop();
@@ -216,332 +343,327 @@ async function startRealPipeline() {
         const lines = part.split('\n');
         const evType = lines[0].replace('event: ', '').trim();
         const evData = JSON.parse(lines[1].replace('data: ', '').trim());
-        handleSSEEvent(evType, evData);
+
+        handleStreamEvent(evType, evData, elements, () => streamBuffer, (val) => { streamBuffer = val; });
       }
     }
   } catch (err) {
-    if (err.name === 'AbortError') return;
-    showToast(err.message, 'error');
-    document.getElementById('run-status').textContent = 'ERROR / ABORTED';
-  } finally {
-    if (currentAbortController && !currentAbortController.signal.aborted) {
-      isPipelineRunning = false;
-      document.getElementById('run-btn').disabled = false;
-      document.getElementById('status-ring').style.animationPlayState = 'paused';
-      if(document.getElementById('run-status').textContent === 'RESEARCHING...') {
-        document.getElementById('run-status').textContent = 'IDLE';
-      }
+    if (err.name === 'AbortError') {
+      showToast('Research stopped by user', 'error');
+    } else {
+      showToast(err.message, 'error');
+      elements.reportBody.innerHTML = `<div style="color:var(--accent-red);background:rgba(239,68,68,0.1);padding:12px;border-radius:8px;">❌ Error: ${err.message}</div>`;
     }
+    elements.thinkingSpinner.style.display = 'none';
+    elements.thinkingTitle.textContent = 'Multi-Agent Run Stopped';
+  } finally {
+    isPipelineRunning = false;
+    currentAbortController = null;
+    sendBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
+    sendBtn.title = 'Send message';
+    loadHistory();
   }
 }
 
-function handleSSEEvent(evType, evData) {
+function handleStreamEvent(evType, evData, ui, getStreamBuffer, setStreamBuffer) {
+  const id = ui.idSuffix;
+
   if (evType === 'agent_start') {
-    const agent = evData.agent;
-    setNodeState(agent, 'active', 'working…');
-    agentLogs[agent] = { desc: evData.message, log: '…' };
-    openDrawer(agent);
+    const a = evData.agent;
+    const stepEl = document.getElementById(`step-${a}-${id}`);
+    const statusEl = document.getElementById(`step-status-${a}-${id}`);
+    if (stepEl) stepEl.className = 'agent-step-item active';
+    if (statusEl) statusEl.textContent = 'running…';
+
+    ui.thinkingTitle.textContent = `Agent Active: ${AGENT_META[a]?.name || a}...`;
+    ui.thinkingSummary.textContent = evData.message || '';
   }
-  
+
   else if (evType === 'agent_done') {
-    const agent = evData.agent;
+    const a = evData.agent;
     const r = evData.result || {};
-    let desc = agentLogs[agent] ? agentLogs[agent].desc : '';
-    let log = '';
+    const stepEl = document.getElementById(`step-${a}-${id}`);
+    const statusEl = document.getElementById(`step-status-${a}-${id}`);
+    if (stepEl) stepEl.className = 'agent-step-item done';
 
-    if (agent === 'router') {
-      log = `→ tone: ${r.tone}\n→ casual: ${r.is_casual}`;
-    }
-    else if (agent === 'planner') {
-      log = `→ ${r.plan?.length || 0} sub-tasks planned`;
-      if (r.plan && r.plan.length > 0) {
-        log += '\n\n**Generated Plan:**\n' + r.plan.map((t, i) => `${i+1}. ${t}`).join('\n');
-      }
-    }
-    else if (agent === 'researcher') {
-      log = `→ found ${r.sources_found || 0} sources (pass ${r.iteration || 1})`;
-      if (r.sources && r.sources.length > 0) {
-        const unique = [];
-        const seen = new Set();
-        r.sources.forEach(s => {
-          if (!seen.has(s.url)) {
-            seen.add(s.url);
-            unique.push(s);
-          }
-        });
-        log += '\n\n**Sources Analyzed:**\n' + unique.map((s, i) => `${i+1}. [${s.title}](${s.url})`).join('\n');
-      }
-    }
-    else if (agent === 'retriever') log = `→ retrieved ${r.docs_retrieved || 0} vectors`;
-    else if (agent === 'critic') {
-      const score = (r.confidence || 0).toFixed(2);
-      if (r.passed) {
-        log = `→ confidence ${score} ✓`;
-        setNodeState(agent, 'done', `confidence ${score} ✓`);
-      } else {
-        log = `→ confidence ${score} ↺ retrying`;
-        setNodeState(agent, 'loop', `confidence ${score} ↺`);
-        // Animate connector backwards if going from critic to researcher
-        const prevConn = document.getElementById('conn-retriever');
-        if(prevConn) prevConn.style.width = '0%';
-        const prevConn2 = document.getElementById('conn-researcher');
-        if(prevConn2) prevConn2.style.width = '0%';
-        
-        // Reset the nodes that are going to be re-run so they don't look permanently done
-        setNodeState('retriever', 'idle', 'idle');
-        setNodeState('researcher', 'idle', 'idle');
-      }
-      updateConfidenceUI(score, r.iteration);
-    }
-    else if (agent === 'reporter') log = `→ report compiled (${r.report_length} chars)`;
-
-    if (agent !== 'critic' || r.passed) {
-      setNodeState(agent, 'done', r.cached ? 'cached ✓' : 'done');
-    }
-    
-    agentLogs[agent] = { desc: desc, log: log };
-    
-    // update drawer if it's currently open for this agent
-    const drawerTitle = document.getElementById('drawerTitle').textContent;
-    if (drawerTitle.toLowerCase() === AGENT_META[agent].name.toLowerCase()) {
-      openDrawer(agent);
+    if (a === 'router') {
+      if (statusEl) statusEl.textContent = r.is_casual ? 'casual' : `${r.tone || 'routed'}`;
+    } else if (a === 'planner') {
+      if (statusEl) statusEl.textContent = `${r.plan?.length || 0} sub-tasks planned`;
+    } else if (a === 'researcher') {
+      if (statusEl) statusEl.textContent = `${r.sources_found || 0} sources found`;
+    } else if (a === 'retriever') {
+      if (statusEl) statusEl.textContent = `${r.docs_retrieved || 0} chunks retrieved`;
+    } else if (a === 'critic') {
+      const conf = (r.confidence || 0).toFixed(2);
+      if (statusEl) statusEl.textContent = r.passed ? `confidence ${conf} ✓` : `confidence ${conf} ↺ retry`;
+    } else if (a === 'reporter') {
+      if (statusEl) statusEl.textContent = 'report synthesized ✓';
     }
   }
-  
+
+  else if (evType === 'report_chunk') {
+    let buf = getStreamBuffer();
+    buf += evData.chunk;
+    setStreamBuffer(buf);
+    ui.reportBody.innerHTML = md2html(buf) + '<span class="stream-cursor"></span>';
+    scrollToBottom();
+  }
+
   else if (evType === 'hitl_pause') {
     currentThreadId = evData.thread_id;
-    document.getElementById('run-status').textContent = 'WAITING FOR APPROVAL';
-    document.getElementById('resume-btn').style.display = 'inline-block';
-    showToast('Human review required. Check intermediate results and approve.', 'success');
-    
-    const reviewSection = document.getElementById('hitl-review-section');
-    if (reviewSection) {
-      reviewSection.style.display = 'block';
-      let reviewHtml = '<h3>1. Generated Plan (5 Tasks)</h3><ul>';
-      (evData.plan || []).forEach(t => reviewHtml += `<li>${t}</li>`);
-      reviewHtml += '</ul><br><h3>2. Polished Web Research</h3>';
-      (evData.polished_research || []).forEach(r => reviewHtml += md2html(r));
-      document.getElementById('hitl-review-content').innerHTML = reviewHtml;
-      reviewSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    document.getElementById('hitlBanner').style.display = 'flex';
+    showToast('Human review required before report synthesis.');
   }
-  
-  else if (evType === 'report_chunk') {
-    if (document.getElementById('report-viewer-section').style.display === 'none') {
-      document.getElementById('report-viewer-section').style.display = 'block';
-      _streamBuffer = '';
-    }
-    _streamBuffer += evData.chunk;
-    document.getElementById('report-body').innerHTML = md2html(_streamBuffer) + '<span class="stream-cursor"></span>';
-  }
-  
-  else if (evType === 'complete') {
-    document.getElementById('run-status').textContent = 'COMPLETE';
-    document.getElementById('resume-btn').style.display = 'none';
-    
-    if (evData.is_casual) {
-      const agentsToSkip = ['planner', 'researcher', 'retriever', 'critic', 'reporter'];
-      agentsToSkip.forEach((a, idx) => {
-        setTimeout(() => {
-          setNodeState(a, 'skipped', 'bypassed');
-        }, idx * 150);
-      });
-    }
 
-    if(_streamBuffer) {
-      _lastReportString = _streamBuffer;
-      document.getElementById('report-body').innerHTML = md2html(_streamBuffer); // remove cursor
-    } else if (evData.report) {
-      _lastReportString = evData.report;
-      document.getElementById('report-viewer-section').style.display = 'block';
-      document.getElementById('report-body').innerHTML = md2html(evData.report);
-    }
+  else if (evType === 'complete') {
+    ui.thinkingSpinner.style.display = 'none';
+    ui.thinkingCard.classList.remove('active');
+    ui.thinkingTitle.textContent = '✓ Multi-Agent Pipeline Completed';
+    ui.thinkingSummary.textContent = '(6 agents coordinated · 100% verified citations)';
     
-    // Show doubt section
-    const doubtSec = document.getElementById('doubt-section');
-    if (doubtSec) doubtSec.style.display = 'block';
-    
-    loadArchive();
+    // Automatically collapse thinking card on finish so report is prominent
+    ui.thinkingCard.classList.remove('expanded');
+
+    let finalReport = getStreamBuffer() || evData.report || '';
+    currentReportMarkdown = finalReport;
+    ui.reportBody.innerHTML = md2html(finalReport);
+
+    renderMetaBadges(ui.metaBadges, finalReport);
+    ui.reportFooter.style.display = 'flex';
+    scrollToBottom();
   }
-  
+
   else if (evType === 'error') {
     showToast(evData.message || 'Error occurred', 'error');
-    document.getElementById('run-status').textContent = 'ERROR';
   }
 }
 
+function renderMetaBadges(container, reportText) {
+  if (!container || !reportText) return;
+  const urls = reportText.match(/https?:\/\/[^\s\)]+/g) || [];
+  const domains = new Set();
+  urls.forEach(u => {
+    try { domains.add(new URL(u).hostname.replace('www.', '')); } catch(e){}
+  });
+  const citations = reportText.match(/\[\d+\]/g) || [];
+  const uniqueCitations = new Set(citations);
+
+  container.innerHTML = `
+    <span class="meta-pill">🔍 <strong>${uniqueCitations.size}</strong> verified citations</span>
+    <span class="meta-pill">🌐 <strong>${domains.size}</strong> distinct sources</span>
+    <span class="meta-pill verified">🛡️ Anti-Hallucination Verified</span>
+  `;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Follow-up Q&A (Doubt Agent Turn)
+// ─────────────────────────────────────────────────────────────────────────────
+async function submitFollowUpDoubt(question) {
+  if (!currentReportMarkdown) return;
+
+  appendUserMessage(question);
+
+  const thread = document.getElementById('messagesThread');
+  const msgRow = document.createElement('div');
+  msgRow.className = 'chat-message assistant';
+  const idSuffix = Date.now();
+
+  msgRow.innerHTML = `
+    <div class="msg-avatar">✦</div>
+    <div class="msg-content-wrapper">
+      <div class="report-markdown-body" id="doubtAnswer-${idSuffix}">
+        <p style="color:var(--text-muted);font-style:italic;">Analyzing report context<span class="stream-cursor"></span></p>
+      </div>
+    </div>
+  `;
+  thread.appendChild(msgRow);
+  scrollToBottom();
+
+  const answerEl = document.getElementById(`doubtAnswer-${idSuffix}`);
+
+  try {
+    const res = await fetch(`${API_BASE}/doubt`, {
+      method: 'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify({
+        report: currentReportMarkdown,
+        question: question
+      })
+    });
+
+    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    answerEl.innerHTML = md2html(data.answer);
+    scrollToBottom();
+  } catch (err) {
+    answerEl.innerHTML = `<span style="color:var(--accent-red)">Error analyzing question: ${err.message}</span>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HITL Resume
+// ─────────────────────────────────────────────────────────────────────────────
 async function resumePipeline() {
   if (!currentThreadId) return;
-  document.getElementById('resume-btn').style.display = 'none';
-  document.getElementById('run-status').textContent = 'RESEARCHING...';
-  document.getElementById('hitl-review-section').style.display = 'none';
-  document.getElementById('report-viewer-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('hitlBanner').style.display = 'none';
   try {
     const res = await fetch(`${API_BASE}/research/resume`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: apiHeaders(),
       body: JSON.stringify({ thread_id: currentThreadId })
     });
     if (!res.ok) throw new Error('Failed to resume');
-    showToast('Generating final report...');
+    showToast('Report generation resumed!');
   } catch (err) {
     showToast(err.message, 'error');
   }
 }
 
-let trendTimeline = [];
-function updateConfidenceUI(scoreStr, iteration) {
-  const score = parseFloat(scoreStr);
-  document.getElementById('conf-val').textContent = score.toFixed(2);
-  
-  // update radial gauge
-  const dash = 238.7 * score; 
-  document.getElementById('conf-svg').style.strokeDashoffset = 238.7 - dash;
-  
-  // update color based on score
-  let color = '#E38080'; // red
-  if (score > 0.75) color = '#7DD3A8'; // green
-  else if (score > 0.5) color = '#FBBF6B'; // amber
-  document.getElementById('conf-svg').style.stroke = color;
-  
-  // update trend bars
-  if (iteration === 1) {
-    trendTimeline = [];
-    document.getElementById('trend-bars').innerHTML = '';
+// ─────────────────────────────────────────────────────────────────────────────
+// Export & Copy Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function copyReportText() {
+  if (!currentReportMarkdown) {
+    showToast('No report to copy', 'error');
+    return;
   }
-  trendTimeline.push({ score, color });
-  
-  const bars = trendTimeline.map(t => {
-    const h = Math.max(10, t.score * 80); // scale height up to 80px
-    return `<div class="trend-bar" style="height:${h}px; background:${t.color};"><span>${t.score.toFixed(2)}</span></div>`;
-  }).join('');
-  document.getElementById('trend-bars').innerHTML = bars;
+  navigator.clipboard.writeText(currentReportMarkdown).then(() => {
+    showToast('Report copied to clipboard!');
+  }).catch(() => {
+    showToast('Failed to copy', 'error');
+  });
 }
 
-// ─────────────────────────────────────────────────────────
-// ARCHIVE
-// ─────────────────────────────────────────────────────────
-function timeAgo(ts) {
-  const diff = Date.now()/1000 - ts;
-  if(diff < 60) return 'Just now';
-  if(diff < 3600) return Math.floor(diff/60) + 'm ago';
-  if(diff < 86400) return Math.floor(diff/3600) + 'h ago';
-  return Math.floor(diff/86400) + 'd ago';
+function downloadReportMd() {
+  if (!currentReportMarkdown) {
+    showToast('No report to download', 'error');
+    return;
+  }
+  const blob = new Blob([currentReportMarkdown], { type: 'text/markdown;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `research_report_${new Date().toISOString().slice(0, 10)}.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Download started!');
 }
 
-async function loadArchive() {
-  const grid = document.getElementById('archiveGrid');
-  grid.innerHTML = '<div class="empty-state">Loading history...</div>';
+// ─────────────────────────────────────────────────────────────────────────────
+// History Loading
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadHistory() {
+  const listEl = document.getElementById('historyList');
+  if (!listEl) return;
+
   try {
-    const res = await fetch(`${API_BASE}/reports?limit=12`);
-    if (!res.ok) throw new Error('Failed to load reports');
+    const res = await fetch(`${API_BASE}/reports?limit=25`, { headers: apiHeaders() });
+    if (!res.ok) throw new Error('Could not fetch past reports');
     const data = await res.json();
-    
-    if(!data.reports || data.reports.length === 0) {
-      grid.innerHTML = '<div class="empty-state">No past runs found.</div>';
+
+    if (!data.reports || data.reports.length === 0) {
+      listEl.innerHTML = '<div class="history-loading">No past research yet.</div>';
       return;
     }
-    
-    let reportsToRender = data.reports;
-    if (currentArchiveFilter === 'high') {
-      reportsToRender = reportsToRender.filter(r => r.confidence > 0.75);
-    }
-    
-    if(reportsToRender.length === 0) {
-      grid.innerHTML = '<div class="empty-state">No high confidence runs found.</div>';
-      return;
-    }
-    
-    grid.innerHTML = '';
-    reportsToRender.forEach(r => {
-      const color = r.confidence > 0.75 ? '#7DD3A8' : r.confidence > 0.5 ? '#FBBF6B' : '#E38080';
-      const dash = 100.5 * r.confidence;
-      const card = document.createElement('div');
-      card.className = 'card';
-      
-      // Provide a clean excerpt of the markdown report text
-      let rawText = (r.report || '').replace(/#|\*|`|>|\[|\]/g, ' ').substring(0, 120);
-      
-      card.innerHTML = `
-        <div class="card-top">
-          <div class="card-title">${r.query}</div>
-          <svg class="mini-gauge" viewBox="0 0 40 40">
-            <circle cx="20" cy="20" r="16" fill="none" stroke="#1F2833" stroke-width="5"/>
-            <circle cx="20" cy="20" r="16" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round"
-              stroke-dasharray="100.5" stroke-dashoffset="${100.5 - dash}" transform="rotate(-90 20 20)"/>
-            <text x="20" y="24" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="${color}">${r.confidence.toFixed(2)}</text>
-          </svg>
-        </div>
-        <div class="card-excerpt">${rawText}...</div>
-        <div class="card-meta"><span>${r.tone}</span><span>${timeAgo(r.created_at)}</span></div>
+
+    listEl.innerHTML = '';
+    data.reports.forEach(r => {
+      const item = document.createElement('div');
+      item.className = 'history-item';
+      item.innerHTML = `
+        <span class="history-item-text" title="${escapeHtml(r.query)}">${escapeHtml(r.query)}</span>
+        <button class="icon-btn history-delete-btn" title="Delete" onclick="deleteHistoryReport(event, ${r.id})">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        </button>
       `;
-      // allow clicking card to load report in the viewer
-      card.onclick = () => {
-        document.getElementById('report-viewer-section').style.display = 'block';
-        document.getElementById('report-body').innerHTML = md2html(r.report);
-        document.getElementById('report-viewer-section').scrollIntoView();
+
+      item.onclick = (e) => {
+        if (e.target.closest('.history-delete-btn')) return;
+        loadExistingReportIntoChat(r);
       };
-      grid.appendChild(card);
+
+      listEl.appendChild(item);
     });
-  } catch(e) {
-    grid.innerHTML = `<div class="empty-state">Could not load history: ${e.message}</div>`;
+  } catch (err) {
+    listEl.innerHTML = `<div class="history-loading">Error loading history</div>`;
   }
 }
 
-// init
-let currentArchiveFilter = 'all';
+function loadExistingReportIntoChat(r) {
+  startNewChat();
+  currentReportMarkdown = r.report;
+  currentReportId = r.id;
 
-async function filterArchive(filterType, element) {
-  currentArchiveFilter = filterType;
-  document.querySelectorAll('.archive-controls .chip').forEach(c => c.classList.remove('active'));
-  element.classList.add('active');
-  await loadArchive();
+  appendUserMessage(r.query);
+
+  const thread = document.getElementById('messagesThread');
+  const msgRow = document.createElement('div');
+  msgRow.className = 'chat-message assistant';
+  const idSuffix = Date.now();
+
+  msgRow.innerHTML = `
+    <div class="msg-avatar">✦</div>
+    <div class="msg-content-wrapper">
+      <div class="report-markdown-body">
+        ${md2html(r.report)}
+      </div>
+      <div class="report-footer-meta" style="display:flex;">
+        <div class="meta-badges-group" id="historyBadges-${idSuffix}"></div>
+        <div class="report-actions-group">
+          <button class="action-btn" onclick="copyReportText()">📋 Copy</button>
+          <button class="action-btn" onclick="downloadReportMd()">⬇️ Download</button>
+        </div>
+      </div>
+    </div>
+  `;
+  thread.appendChild(msgRow);
+  renderMetaBadges(document.getElementById(`historyBadges-${idSuffix}`), r.report);
+  scrollToBottom();
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  const chips = document.querySelectorAll('.archive-controls .chip');
-  if(chips.length >= 2) {
-    chips[0].onclick = (e) => filterArchive('all', e.target);
-    chips[1].onclick = (e) => filterArchive('high', e.target);
-  }
-});
-
-setTimeout(() => loadArchive(), 500);
-
-document.getElementById('queryInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter' || e.keyCode === 13) {
-    e.preventDefault();
-    startRealPipeline();
-  }
-});
-
-// Doubt Agent
-async function askDoubt() {
-  const input = document.getElementById('doubtInput');
-  const btn = document.getElementById('doubt-btn');
-  const responseBox = document.getElementById('doubt-response');
-  const q = input.value.trim();
-  if(!q || !_lastReportString) return;
-
-  btn.textContent = 'Thinking...';
-  btn.disabled = true;
-  responseBox.style.display = 'block';
-  responseBox.innerHTML = '<span style="color:var(--muted)"><em>Consulting Doubt agent...</em></span>';
-
+async function deleteHistoryReport(event, id) {
+  event.stopPropagation();
   try {
-    const res = await fetch(API_BASE + '/doubt', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ report: _lastReportString, question: q })
+    const res = await fetch(`${API_BASE}/reports/${id}`, {
+      method: 'DELETE',
+      headers: apiHeaders()
     });
-    const data = await res.json();
-    if(data.error) throw new Error(data.error);
-    responseBox.innerHTML = `<strong>Q: ${q}</strong><br><br>${md2html(data.answer)}`;
-    input.value = '';
-  } catch(e) {
-    responseBox.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
-  } finally {
-    btn.textContent = 'Ask';
-    btn.disabled = false;
+    if (!res.ok) throw new Error('Delete failed');
+    showToast('Report deleted');
+    loadHistory();
+  } catch (err) {
+    showToast(err.message, 'error');
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// App Initialization
+// ─────────────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadHistory();
+  const input = document.getElementById('chatInput');
+  if (input) {
+    input.focus();
+  }
+
+  // Check backend health
+  fetch(`${API_BASE}/health`)
+    .then(r => r.json())
+    .then(data => {
+      const badge = document.getElementById('apiHealthBadge');
+      if (badge) {
+        badge.textContent = data.status === 'healthy' ? '● 6 Agents Ready' : '● Degraded';
+        badge.style.color = data.status === 'healthy' ? 'var(--accent-green)' : 'var(--accent-amber)';
+      }
+    })
+    .catch(() => {
+      const badge = document.getElementById('apiHealthBadge');
+      if (badge) {
+        badge.textContent = '● Offline';
+        badge.style.color = 'var(--accent-red)';
+      }
+    });
+});

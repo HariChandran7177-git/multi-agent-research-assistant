@@ -126,8 +126,8 @@ def calculate_retrieval_relevance(qdrant_scores: list) -> float:
     missing retrieval data, prevents thin research from passing as confident.
     """
     if not qdrant_scores:
-        logger.warning("[Scorer] No Qdrant scores available — using penalty default 0.4")
-        return 0.4  # Honest penalty: missing retrieval data should lower confidence
+        logger.warning("[Scorer] No Qdrant scores available — using neutral default 0.6")
+        return 0.6  # Neutral default: missing retrieval shouldn't tank the whole score
 
     score = sum(qdrant_scores) / len(qdrant_scores)
     logger.debug(f"[Scorer] Retrieval relevance (Qdrant avg): {score:.2f} over {len(qdrant_scores)} docs")
@@ -182,13 +182,13 @@ def calculate_objective_score(state: dict, qdrant_scores: list = None) -> dict:
     """
     Combines all signals into one objective quality score, independent of LLM judgment.
 
-    Weights (quality-first design):
-      Retrieval Relevance  35%  - most reliable; Qdrant directly measures query-doc match
-      Plan Coverage        20%  - did we actually answer what was planned?
-      Content Depth        20%  - is the content detailed, not just thin snippets?
-      Source Quality       10%  - credibility of domains found
+    Weights (balanced design — retrieval is no longer dominant):
+      Plan Coverage        25%  - did we actually answer what was planned?
+      Content Depth        25%  - is the content detailed, not just thin snippets?
+      Source Quality       15%  - credibility of domains found
+      Retrieval Relevance  15%  - Qdrant query-doc match (reduced: often unavailable)
       Duplicate Penalty    10%  - penalize redundant results
-      Diversity             5%  - variety of perspectives (least critical)
+      Diversity            10%  - variety of perspectives
 
     Returns a dict with the composite score AND a breakdown for full transparency.
     """
@@ -203,12 +203,12 @@ def calculate_objective_score(state: dict, qdrant_scores: list = None) -> dict:
     diversity       = calculate_diversity_score(research_results)
 
     composite = (
-        (relevance      * 0.35) +
-        (plan_coverage  * 0.20) +
-        (depth          * 0.20) +
-        (source_quality * 0.10) +
+        (plan_coverage  * 0.25) +
+        (depth          * 0.25) +
+        (source_quality * 0.15) +
+        (relevance      * 0.15) +
         (dup_penalty    * 0.10) +
-        (diversity      * 0.05)
+        (diversity      * 0.10)
     )
     composite = round(min(max(composite, 0.0), 1.0), 3)
 
@@ -231,14 +231,15 @@ def calculate_objective_score(state: dict, qdrant_scores: list = None) -> dict:
 # ---------------------------------------------------------------------------
 
 def calculate_hybrid_score(llm_score: float, objective_breakdown: dict,
-                            llm_weight: float = 0.07,
-                            obj_weight: float = 0.93) -> float:
+                            llm_weight: float = 0.30,
+                            obj_weight: float = 0.70) -> float:
     """
-    Blends objective rule-based score (93%) with LLM judgment (7%).
+    Blends objective rule-based score (70%) with LLM judgment (30%).
     
-    The objective signals carry the overwhelming weight (93%) because they
-    are deterministic, reproducible, and catch structural failures. The LLM's
-    7% contribution adds a thin semantic quality check without dominating.
+    The objective signals carry majority weight (70%) because they are
+    deterministic and reproducible. The LLM's 30% contribution provides
+    meaningful semantic quality assessment — it's good at judging whether
+    research actually answers the query, which pure heuristics can miss.
 
     Objective catches:
         * Verbose-but-thin content that 'looks' good to an LLM
