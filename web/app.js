@@ -184,6 +184,19 @@ function scrollToBottom() {
 // Message Submission Dispatcher
 // ─────────────────────────────────────────────────────────────────────────────
 function submitMessage() {
+  if (isPipelineRunning) {
+    if (currentAbortController) currentAbortController.abort();
+    isPipelineRunning = false;
+    const sendBtn = document.getElementById('sendBtn');
+    if (sendBtn) {
+      sendBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a1 1 0 0 1 .707.293l6 6a1 1 0 0 1-1.414 1.414L13 6.414V20a1 1 0 1 1-2 0V6.414L6.707 10.707a1 1 0 0 1-1.414-1.414l6-6A1 1 0 0 1 12 3z"/></svg>';
+      sendBtn.title = 'Send message';
+      const input = document.getElementById('chatInput');
+      sendBtn.disabled = !input || !input.value.trim();
+    }
+    return;
+  }
+
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
   if (!text) return;
@@ -359,8 +372,10 @@ async function startResearchStream(query) {
   } finally {
     isPipelineRunning = false;
     currentAbortController = null;
-    sendBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
+    sendBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a1 1 0 0 1 .707.293l6 6a1 1 0 0 1-1.414 1.414L13 6.414V20a1 1 0 1 1-2 0V6.414L6.707 10.707a1 1 0 0 1-1.414-1.414l6-6A1 1 0 0 1 12 3z"/></svg>';
     sendBtn.title = 'Send message';
+    const input = document.getElementById('chatInput');
+    sendBtn.disabled = !input || !input.value.trim();
     loadHistory();
   }
 }
